@@ -136,7 +136,7 @@ def download_template():
         st.warning("Template file not found. Please contact support.")
 
 # Main application title
-st.title("Pharmacy Roster Scheduler")
+st.title("AH Pharmacy Roster Scheduler")
 
 # Setup pages for navigation
 app_pages = ["Introduction", "Upload Data", "Configure Settings", "Generate Roster", "View Results"]
@@ -201,7 +201,7 @@ def nav_to(target_page):
 
 # Main content
 if st.session_state.page == "Introduction":
-    st.header("Welcome to the Pharmacy Roster Scheduler")
+    st.header("Welcome to the AH Pharmacy Roster Scheduler")
     
     st.markdown("""
     <div class="info-box">
@@ -1146,6 +1146,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.divider()
 st.markdown("""
 <div class="footnote" style="text-align: center">
-Pharmacy Roster Scheduler • Developed by AH DSA • © 2025
+AH Pharmacy Roster Scheduler • Developed by AH DSA • © 2025
 </div>
 """, unsafe_allow_html=True)
