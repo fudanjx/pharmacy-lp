@@ -1,0 +1,17 @@
+# Exclude the .claude folder
+.claude/
+
+# Exclude the .venv folder
+.venv/
+
+# Exclude the debug folder
+debug/
+
+# Exclude the visualizations folder
+visualizations/
+
+# Exclude specific files
+CLAUDE.md
+PRD.md
+Roster_Schedule.xlsx
+Availability.xls
