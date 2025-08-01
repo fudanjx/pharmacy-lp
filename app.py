@@ -25,7 +25,7 @@ from utils import validate_excel_file
 
 # Set page configuration
 st.set_page_config(
-    page_title="Pharmacy Roster Scheduler",
+    page_title="AH Pharmacy Roster Scheduler",
     page_icon="💊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1146,6 +1146,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.divider()
 st.markdown("""
 <div class="footnote" style="text-align: center">
-Pharmacy Roster Scheduler • Developed with Streamlit • © 2025
+Pharmacy Roster Scheduler • Developed by AH DSA • © 2025
 </div>
 """, unsafe_allow_html=True)
