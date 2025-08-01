@@ -271,13 +271,66 @@ class RosterModel:
                     f"ACC_coverage_link_{weekend}"
                 )
                 
-                # Try to enforce ACC coverage on Saturdays
+                        # Make ACC coverage a soft constraint with high penalty for not having coverage
+                # This allows the model to find a solution even when ACC coverage is impossible
+                acc_penalty = LpVariable(f"acc_penalty_{weekend}", 0, 1, LpBinary)
                 self.problem += (
-                    acc_coverage[weekend] == 1,
+                    acc_coverage[weekend] + acc_penalty == 1,
                     f"ACC_coverage_Saturday_{weekend}"
                 )
+                
+                # Add penalty to objective
+                self.problem += acc_penalty * 5  # High penalty weight to prioritize ACC coverage
         else:
             print("No ACC-trained staff found, skipping ACC coverage constraint")
+
+    def _relax_constraints(self) -> None:
+        """Relax hard constraints to make model easier to solve"""
+        # Identify and relax problematic constraints
+        # We'll focus on the consecutive weekends constraints as they're often problematic
+        
+        # Look for constraints with 'No_consecutive_weekends' in the name and remove them
+        consec_constraints = [c for c in self.problem.constraints if "No_consecutive_weekends" in c]
+        for c in consec_constraints:
+            del self.problem.constraints[c]
+            
+        print(f"Removed {len(consec_constraints)} hard consecutive weekend constraints")
+        
+        # Replace with soft constraints if they don't exist yet
+        if not any("consec_penalty" in str(v) for v in self.problem.variables()):
+            print("Adding soft consecutive weekend constraints instead")
+            consecutive_penalties = {}
+            
+            # Get the weekend assignments variables
+            weekend_assignments = {}
+            for var in self.problem.variables():
+                if var.name.startswith("y_"):
+                    # Parse variable name to get staff and weekend
+                    parts = var.name.split("_")
+                    if len(parts) >= 3:
+                        staff = parts[1]
+                        weekend = int(parts[2])
+                        weekend_assignments[(staff, weekend)] = var
+            
+            # Add soft constraints
+            for staff in self.staff_names:
+                for i, weekend in enumerate(sorted(self.weekends)[:-1]):
+                    next_weekend = sorted(self.weekends)[i+1]
+                    if (staff, weekend) in weekend_assignments and (staff, next_weekend) in weekend_assignments:
+                        penalty_var = LpVariable(f"consec_penalty_{staff}_{weekend}_{next_weekend}", 0, 1, LpBinary)
+                        consecutive_penalties[(staff, weekend, next_weekend)] = penalty_var
+                        
+                        # Link penalty variable to consecutive weekends
+                        self.problem += (
+                            weekend_assignments[(staff, weekend)] + 
+                            weekend_assignments[(staff, next_weekend)] <= 1 + penalty_var,
+                            f"Consec_weekend_soft_{staff}_{weekend}_{next_weekend}"
+                        )
+            
+            # Add penalties to objective function
+            if consecutive_penalties:
+                penalty_sum = pulp.lpSum(consecutive_penalties.values())
+                self.problem += penalty_sum * 2  # Add to the objective with weight
 
     def solve(self) -> Dict:
         """
@@ -289,13 +342,26 @@ class RosterModel:
         if not self.problem:
             self.create_model()
         
-        # Solve the problem
-        self.problem.solve()
+        # Solve the problem with increased timeLimit to allow more time to find a solution
+        solver = pulp.PULP_CBC_CMD(msg=True, timeLimit=120)
+        self.problem.solve(solver)
         
         # Check if a solution was found
         if LpStatus[self.problem.status] != "Optimal":
             print(f"No optimal solution found. Status: {LpStatus[self.problem.status]}")
-            return {}
+            print("Attempting to relax constraints and solve again...")
+            
+            # Relax the hard constraints for consecutive weekends to make them soft
+            self._relax_constraints()
+            
+            # Try solving again
+            self.problem.solve(solver)
+            
+            if LpStatus[self.problem.status] != "Optimal":
+                print(f"Still no optimal solution after relaxing constraints. Status: {LpStatus[self.problem.status]}")
+                return {}
+            else:
+                print("Found solution after relaxing constraints")
         
         # Extract results
         roster = {}

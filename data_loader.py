@@ -51,8 +51,11 @@ class DataLoader:
         print(self.staff_data.head(3).to_string())
         print("-------------------------\n")
         
-        # Extract staff names (first column)
-        self.staff_names = self.staff_data.iloc[:, 0].tolist()
+        # Extract staff names (first column) and convert to strings
+        self.staff_names = [
+            str(name).strip() if pd.notna(name) else f"Staff_{i}" 
+            for i, name in enumerate(self.staff_data.iloc[:, 0].tolist())
+        ]
         
         # Process ACC-trained staff information from the "ACC" column (column B/index 1)
         try:
@@ -93,17 +96,11 @@ class DataLoader:
             traceback.print_exc()
             pass
         
-        # Set default shift assignments based on staff category
-        for staff in self.staff_names:
-            # Strip any trailing spaces from staff names
-            clean_staff_name = staff.strip() if isinstance(staff, str) else staff
-            
-            # Check against list of staff with 4 shifts
-            if any(clean_staff_name == four_shift.strip() 
-                  for four_shift in self.staff_with_four_shifts):
-                self.staff_shifts[staff] = 4
-            else:
-                self.staff_shifts[staff] = 5
+        # Convert staff_with_four_shifts from list/set to set of normalized names
+        self.staff_with_four_shifts = {self._normalize_name(name) for name in self.staff_with_four_shifts}
+        
+        # Apply default shift assignments
+        self._apply_shift_assignments()
         
         # Verify the total number of shifts is exactly as expected
         total_shifts = sum(self.staff_shifts.values())
@@ -148,36 +145,52 @@ class DataLoader:
             # Get availability columns (skip first two columns - name and ACC info)
             avail_columns = self.staff_data.columns[start_col:]
             
-            # Process columns in pairs (each pair represents a weekend: Saturday + Sunday)
-            for weekend_idx in range(len(avail_columns) // 2):
-                # Calculate column indices for this weekend
-                sat_col_idx = weekend_idx * 2
-                sun_col_idx = sat_col_idx + 1
+            # Determine if columns represent weekends by pairs or individual days
+            # If we have exactly 20 days, assume they're all individual weekend days
+            if len(avail_columns) == 20:
+                print("Detected 20 weekend days - treating each column as individual day")
+                for day_idx in range(len(avail_columns)):
+                    # Determine if it's Saturday or Sunday based on index
+                    day_type = "Saturday" if day_idx % 2 == 0 else "Sunday"
+                    weekend_idx = day_idx // 2
+                    
+                    # Get the column value
+                    avail_val = self.staff_data.iloc[idx, day_idx + start_col]
+                    if pd.notna(avail_val) and (avail_val == 1 or 
+                                               (isinstance(avail_val, str) and avail_val.strip() == '1') or
+                                               avail_val is True):
+                        staff_avail[(weekend_idx, day_type)] = ["early", "mid", "late"]
+            else:
+                # Process columns in pairs (each pair represents a weekend: Saturday + Sunday)
+                for weekend_idx in range(len(avail_columns) // 2):
+                    # Calculate column indices for this weekend
+                    sat_col_idx = weekend_idx * 2
+                    sun_col_idx = sat_col_idx + 1
+                    
+                    # Skip if we're out of columns
+                    if sat_col_idx >= len(avail_columns) or sun_col_idx >= len(avail_columns):
+                        continue
+                    
+                    # Get actual column positions
+                    actual_sat_col = sat_col_idx + start_col
+                    actual_sun_col = sun_col_idx + start_col
                 
-                # Skip if we're out of columns
-                if sat_col_idx >= len(avail_columns) or sun_col_idx >= len(avail_columns):
-                    continue
-                
-                # Get actual column positions
-                actual_sat_col = sat_col_idx + start_col
-                actual_sun_col = sun_col_idx + start_col
-                
-                # Skip if these are not availability columns
-                sat_col_name = self.staff_data.columns[actual_sat_col]
-                sun_col_name = self.staff_data.columns[actual_sun_col]
-                if ("ACC" in str(sat_col_name) or "Notes" in str(sat_col_name) or
-                    "ACC" in str(sun_col_name) or "Notes" in str(sun_col_name)):
-                    continue
-                
-                # Process Saturday availability
-                sat_val = self.staff_data.iloc[idx, actual_sat_col]
-                if pd.notna(sat_val) and (sat_val == 1 or (isinstance(sat_val, str) and sat_val.strip() == '1')):
-                    staff_avail[(weekend_idx, "Saturday")] = ["early", "mid", "late"]
-                
-                # Process Sunday availability
-                sun_val = self.staff_data.iloc[idx, actual_sun_col]
-                if pd.notna(sun_val) and (sun_val == 1 or (isinstance(sun_val, str) and sun_val.strip() == '1')):
-                    staff_avail[(weekend_idx, "Sunday")] = ["early", "mid", "late"]
+                    # Skip if these are not availability columns
+                    sat_col_name = self.staff_data.columns[actual_sat_col]
+                    sun_col_name = self.staff_data.columns[actual_sun_col]
+                    if ("ACC" in str(sat_col_name) or "Notes" in str(sat_col_name) or
+                        "ACC" in str(sun_col_name) or "Notes" in str(sun_col_name)):
+                        continue
+                    
+                    # Process Saturday availability
+                    sat_val = self.staff_data.iloc[idx, actual_sat_col]
+                    if pd.notna(sat_val) and (sat_val == 1 or (isinstance(sat_val, str) and sat_val.strip() == '1')):
+                        staff_avail[(weekend_idx, "Saturday")] = ["early", "mid", "late"]
+                    
+                    # Process Sunday availability
+                    sun_val = self.staff_data.iloc[idx, actual_sun_col]
+                    if pd.notna(sun_val) and (sun_val == 1 or (isinstance(sun_val, str) and sun_val.strip() == '1')):
+                        staff_avail[(weekend_idx, "Sunday")] = ["early", "mid", "late"]
             
             # Debug information for first staff member
             if staff == self.staff_names[0]:
@@ -250,6 +263,55 @@ class DataLoader:
         """
         return self.acc_trained_staff
     
+    def set_staff_with_four_shifts(self, staff_list):
+        """
+        Override the default list of staff who should receive 4 shifts.
+        
+        Args:
+            staff_list (list): List of staff names who should get 4 shifts
+        """
+        # Convert to set of normalized names for comparison
+        self.staff_with_four_shifts = {self._normalize_name(name) for name in staff_list}
+        
+        # Re-apply shift assignments based on the new list
+        self._apply_shift_assignments()
+        
+        # Debug info
+        print(f"Updated staff_with_four_shifts: {self.staff_with_four_shifts}")
+    
+    def _normalize_name(self, name):
+        """
+        Normalize a staff name for consistent comparison.
+        
+        Args:
+            name: The staff name to normalize
+            
+        Returns:
+            str: Normalized staff name
+        """
+        return str(name).strip() if pd.notna(name) else ""
+    
+    def _apply_shift_assignments(self):
+        """
+        Apply shift assignments based on staff_with_four_shifts.
+        """
+        # Reset shift assignments
+        self.staff_shifts = {}
+        
+        # Apply shift assignments based on the current staff_with_four_shifts set
+        for staff in self.staff_names:
+            normalized_name = self._normalize_name(staff)
+            if normalized_name in self.staff_with_four_shifts:
+                self.staff_shifts[staff] = 4
+            else:
+                self.staff_shifts[staff] = 5
+        
+        # Debug output
+        staff_with_4 = [staff for staff, shifts in self.staff_shifts.items() if shifts == 4]
+        staff_with_5 = [staff for staff, shifts in self.staff_shifts.items() if shifts == 5]
+        print(f"Staff with 4 shifts: {staff_with_4}")
+        print(f"Staff with 5 shifts: {staff_with_5}")
+            
     def get_staff_shifts(self) -> Dict[str, int]:
         """
         Get the number of shifts assigned to each staff member.

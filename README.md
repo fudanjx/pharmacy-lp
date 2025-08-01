@@ -1,6 +1,6 @@
 # Pharmacy Roster Scheduler
 
-A Python application that uses linear programming to optimize weekend shift assignments for pharmacists based on availability and constraints.
+A Python application that uses linear programming to optimize weekend shift assignments for pharmacists based on availability and constraints. Includes both a command-line interface and a user-friendly web interface built with Streamlit.
 
 ## Overview
 
@@ -41,16 +41,55 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+For detailed instructions on setting up and using the application, please see the [Getting Started Guide](docs/getting_started.md).
+
 ## Usage
 
-### Basic Usage
+The application can be run either through the command line interface or through a user-friendly web interface built with Streamlit.
 
-Run the application with default settings:
+### Web Interface (Recommended)
+
+The Streamlit web interface provides an intuitive way to use the roster scheduler with a graphical user interface.
+
+#### Running the Web Interface
+
+1. Make sure you've installed the required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Launch the Streamlit app:
+```bash
+streamlit run app.py
+```
+
+3. Your default web browser should automatically open to the application (usually at http://localhost:8501)
+
+#### Using the Web Interface
+
+The web interface guides you through the roster generation process with these steps:
+
+1. **Introduction**: Overview of the application and its features
+2. **Upload Data**: Upload the staff availability Excel file or download a template
+3. **Configure Settings**: Set which staff should be assigned 4 shifts vs 5 shifts
+4. **Generate Roster**: Process the data to create an optimized schedule
+5. **View Results**: View, visualize, and download the generated roster
+
+The interface provides:
+- Interactive data tables with filtering options
+- Visualizations of the roster distribution
+- Download options for Excel and CSV formats
+- Ability to highlight specific staff assignments
+
+### Command Line Interface
+
+For batch processing or automation, you can also use the command line interface:
+
 ```bash
 python main.py
 ```
 
-### Command Line Options
+#### Command Line Options
 
 ```
 usage: main.py [-h] [--input INPUT] [--output OUTPUT] [--format {excel,csv,both}] [--visualize] [--visualize-dir VISUALIZE_DIR] [--summary]
@@ -71,19 +110,19 @@ options:
   --summary             Print a summary of the schedule to the console
 ```
 
-### Examples
+#### CLI Examples
 
-#### Generate a roster with specific input and output files:
+Generate a roster with specific input and output files:
 ```bash
 python main.py --input Availability.xls --output MyRoster.xlsx
 ```
 
-#### Generate both Excel and CSV outputs with visualizations:
+Generate both Excel and CSV outputs with visualizations:
 ```bash
 python main.py --format both --visualize
 ```
 
-#### Print a summary of the generated schedule:
+Print a summary of the generated schedule:
 ```bash
 python main.py --summary
 ```
