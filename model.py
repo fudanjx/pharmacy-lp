@@ -354,7 +354,7 @@ class RosterModel:
         if LpStatus[self.problem.status] != "Optimal":
             print(f"No optimal solution found. Status: {LpStatus[self.problem.status]}")
             
-            # Only relax constraints if explicitly allowed
+            # Only relax constraints if explicitly allowed （this is for the newer version)
             if self.relax_constraints:
                 print("Relaxing constraints was enabled - attempting to relax constraints and solve again...")
                 
