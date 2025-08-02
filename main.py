@@ -60,6 +60,12 @@ def parse_arguments():
         help="Print a summary of the schedule to the console"
     )
     
+    parser.add_argument(
+        "--relax-constraints",
+        action="store_true",
+        help="Relax hard constraints if no solution can be found (last resort)"
+    )
+    
     return parser.parse_args()
 
 
@@ -101,7 +107,8 @@ def main():
         loader.get_weekend_days(),
         loader.get_availability(),
         loader.get_acc_trained_staff(),
-        loader.get_staff_shifts()
+        loader.get_staff_shifts(),
+        relax_constraints=args.relax_constraints
     )
     
     model.create_model()

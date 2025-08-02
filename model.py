@@ -16,7 +16,8 @@ class RosterModel:
                  weekend_days: List[Tuple[int, str]],
                  availability: Dict[str, Dict[Tuple[int, str], List[str]]],
                  acc_trained_staff: Set[str],
-                 staff_shifts: Dict[str, int]):
+                 staff_shifts: Dict[str, int],
+                 relax_constraints: bool = False):
         """
         Initialize the RosterModel with necessary data.
 
@@ -41,6 +42,9 @@ class RosterModel:
         
         # Will store the results
         self.results = {}
+        
+        # Flag to control whether constraints can be relaxed
+        self.relax_constraints = relax_constraints
 
     def create_model(self) -> None:
         """Create the linear programming model with all constraints."""
@@ -271,16 +275,11 @@ class RosterModel:
                     f"ACC_coverage_link_{weekend}"
                 )
                 
-                        # Make ACC coverage a soft constraint with high penalty for not having coverage
-                # This allows the model to find a solution even when ACC coverage is impossible
-                acc_penalty = LpVariable(f"acc_penalty_{weekend}", 0, 1, LpBinary)
+                # Try to enforce ACC coverage on Saturdays
                 self.problem += (
-                    acc_coverage[weekend] + acc_penalty == 1,
+                    acc_coverage[weekend] == 1,
                     f"ACC_coverage_Saturday_{weekend}"
                 )
-                
-                # Add penalty to objective
-                self.problem += acc_penalty * 5  # High penalty weight to prioritize ACC coverage
         else:
             print("No ACC-trained staff found, skipping ACC coverage constraint")
 
@@ -342,26 +341,37 @@ class RosterModel:
         if not self.problem:
             self.create_model()
         
-        # Solve the problem with increased timeLimit to allow more time to find a solution
-        solver = pulp.PULP_CBC_CMD(msg=True, timeLimit=120)
+        # Solve the problem with optimized solver parameters
+        solver = pulp.PULP_CBC_CMD(
+            msg=True,             # Show messages for debugging
+            timeLimit=120,        # Allow 2 minutes to solve
+            gapRel=0.05,         # Accept solutions within 5% of optimal
+            options=['presolve on', 'strong branching on', 'cuts on']
+        )
         self.problem.solve(solver)
         
         # Check if a solution was found
         if LpStatus[self.problem.status] != "Optimal":
             print(f"No optimal solution found. Status: {LpStatus[self.problem.status]}")
-            print("Attempting to relax constraints and solve again...")
             
-            # Relax the hard constraints for consecutive weekends to make them soft
-            self._relax_constraints()
-            
-            # Try solving again
-            self.problem.solve(solver)
-            
-            if LpStatus[self.problem.status] != "Optimal":
-                print(f"Still no optimal solution after relaxing constraints. Status: {LpStatus[self.problem.status]}")
-                return {}
+            # Only relax constraints if explicitly allowed
+            if self.relax_constraints:
+                print("Relaxing constraints was enabled - attempting to relax constraints and solve again...")
+                
+                # Relax the hard constraints for consecutive weekends to make them soft
+                self._relax_constraints()
+                
+                # Try solving again
+                self.problem.solve(solver)
+                
+                if LpStatus[self.problem.status] != "Optimal":
+                    print(f"Still no optimal solution after relaxing constraints. Status: {LpStatus[self.problem.status]}")
+                    return {}
+                else:
+                    print("Found solution after relaxing constraints")
             else:
-                print("Found solution after relaxing constraints")
+                print("Constraint relaxation is disabled. To enable, use the relax_constraints=True parameter.")
+                return {}
         
         # Extract results
         roster = {}
