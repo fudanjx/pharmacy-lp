@@ -2,6 +2,8 @@
 
 A Python application that uses linear programming to optimize weekend shift assignments for pharmacists based on availability and constraints. Includes both a command-line interface and a user-friendly web interface built with Streamlit.
 
+App demo is availale at https://ah-pharmacy-roster.streamlit.app/
+
 ## Overview
 
 This application creates optimal quarterly staff schedules for pharmacy weekend shifts, using the PuLP linear programming library. It balances multiple constraints including staff availability, workload distribution, and specialized skills requirements.
@@ -22,6 +24,7 @@ The application requires Python 3.6+ and the following dependencies:
 - Openpyxl (Excel output generation)
 - XLRD (Excel input processing)
 - Matplotlib (visualizations)
+- Streamlit (web interface)
 
 Development requirements include:
 - pytest
@@ -43,53 +46,15 @@ pip install -r requirements.txt
 
 For detailed instructions on setting up and using the application, please see the [Getting Started Guide](docs/getting_started.md).
 
-## Usage
+## Part 1: Command Line Interface (using the first commit)
 
-The application can be run either through the command line interface or through a user-friendly web interface built with Streamlit.
-
-### Web Interface (Recommended)
-
-The Streamlit web interface provides an intuitive way to use the roster scheduler with a graphical user interface.
-
-#### Running the Web Interface
-
-1. Make sure you've installed the required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Launch the Streamlit app:
-```bash
-streamlit run app.py
-```
-
-3. Your default web browser should automatically open to the application (usually at http://localhost:8501)
-
-#### Using the Web Interface
-
-The web interface guides you through the roster generation process with these steps:
-
-1. **Introduction**: Overview of the application and its features
-2. **Upload Data**: Upload the staff availability Excel file or download a template
-3. **Configure Settings**: Set which staff should be assigned 4 shifts vs 5 shifts
-4. **Generate Roster**: Process the data to create an optimized schedule
-5. **View Results**: View, visualize, and download the generated roster
-
-The interface provides:
-- Interactive data tables with filtering options
-- Visualizations of the roster distribution
-- Download options for Excel and CSV formats
-- Ability to highlight specific staff assignments
-
-### Command Line Interface
-
-For batch processing or automation, you can also use the command line interface:
+For batch processing or automation, you can use the command line interface:
 
 ```bash
 python main.py
 ```
 
-#### Command Line Options
+### Command Line Options
 
 ```
 usage: main.py [-h] [--input INPUT] [--output OUTPUT] [--format {excel,csv,both}] [--visualize] [--visualize-dir VISUALIZE_DIR] [--summary]
@@ -110,7 +75,7 @@ options:
   --summary             Print a summary of the schedule to the console
 ```
 
-#### CLI Examples
+### CLI Examples
 
 Generate a roster with specific input and output files:
 ```bash
@@ -126,6 +91,44 @@ Print a summary of the generated schedule:
 ```bash
 python main.py --summary
 ```
+
+## Part 2: Streamlit Web Interface
+
+The application features a user-friendly web interface built with Streamlit, providing an intuitive way to use the roster scheduler without command-line knowledge.
+
+### Live Demo
+
+**A live demo is available at: [https://ah-pharmacy-roster.streamlit.app/](https://ah-pharmacy-roster.streamlit.app/)**
+
+### Running the Web Interface Locally
+
+1. Make sure you've installed the required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Launch the Streamlit app:
+```bash
+streamlit run app.py
+```
+
+3. Your default web browser should automatically open to the application (usually at http://localhost:8501)
+
+### Using the Web Interface (using the latest commit)
+
+The web interface guides you through the roster generation process with these steps:
+
+1. **Introduction**: Overview of the application and its features
+2. **Upload Data**: Upload the staff availability Excel file or download a template
+3. **Configure Settings**: Set which staff should be assigned 4 shifts vs 5 shifts
+4. **Generate Roster**: Process the data to create an optimized schedule
+5. **View Results**: View, visualize, and download the generated roster
+
+The interface provides:
+- Interactive data tables with filtering options
+- Visualizations of the roster distribution
+- Download options for Excel and CSV formats
+- Ability to highlight specific staff assignments
 
 ## Constraints and Requirements
 
@@ -166,6 +169,7 @@ When the `--visualize` flag is used, the program generates:
 ## Project Structure
 
 - `main.py` - Entry point and CLI interface
+- `app.py` - Streamlit web interface
 - `data_loader.py` - Handles reading availability data from Excel
 - `model.py` - Defines the linear programming model and constraints
 - `roster_generator.py` - Processes model results and generates output files
@@ -189,9 +193,16 @@ black .
 flake8
 ```
 
-## License
+## License & Usage
+This project is released under the MIT License.
 
-This project is proprietary and for internal use only.
+✅ Free to Use: You are welcome to use, copy, modify, and distribute this code for personal projects, research, or educational purposes.
+
+⚠️ Non-Commercial Use Only: Commercial usage (including but not limited to selling, integrating into paid products or services, or using it for profit-driven purposes) is strictly prohibited without prior written permission from the author.
+
+🔒 Attribution Required: If you use this code in your project, please provide proper attribution with a link back to this repository.
+
+By using this code, you agree to comply with these terms. Unauthorized commercial exploitation may result in legal action.
 
 ## Acknowledgments
 
