@@ -25,7 +25,7 @@ from utils import validate_excel_file
 
 # Set page configuration
 st.set_page_config(
-    page_title="AH Pharmacy Roster Scheduler",
+    page_title="AH Pharmacy Shift Planner",
     page_icon="💊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -136,7 +136,23 @@ def download_template():
         st.warning("Template file not found. Please contact support.")
 
 # Main application title
-st.title("AH Pharmacy Roster Scheduler")
+# st.title("AH Pharmacy Shift Planner" )
+# Read and encode the image
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+# Embed the image in HTML
+image_base64 = get_base64_image("bot-NUHS-01.png")
+st.markdown(
+    f"""
+    <div style="display: flex; align-items: center;">
+        <img src="data:image/png;base64,{image_base64}" alt="Icon" style="width: 90px; height: 45px; margin-right: 30px;">
+        <h1 style="margin: 0;">AH Pharmacy Shift Planner</h1>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 # Setup pages for navigation
 app_pages = ["Introduction", "Upload Data", "Configure Settings", "Generate Roster", "View Results"]
@@ -1146,6 +1162,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.divider()
 st.markdown("""
 <div class="footnote" style="text-align: center">
-AH Pharmacy Roster Scheduler • Developed by AH DSA • © 2025
+AH Pharmacy Shift Planner • Developed by AH DSA • © 2025
 </div>
 """, unsafe_allow_html=True)
