@@ -201,7 +201,7 @@ def nav_to(target_page):
 
 # Main content
 if st.session_state.page == "Introduction":
-    st.header("Welcome to the AH Pharmacy Roster Scheduler")
+    # st.header("Welcome to the AH Pharmacy Roster Scheduler")
     
     st.markdown("""
     <div class="info-box">
