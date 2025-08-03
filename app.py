@@ -109,6 +109,7 @@ def reset_app():
     st.session_state.availability_df = None
     st.session_state.uploaded_file = None
     st.session_state.allocation_feasible = False
+    st.session_state.model = None
     
     # Refresh the page
     st.rerun()
@@ -675,6 +676,18 @@ elif st.session_state.page == "Configure Settings":
                 st.warning(f"More staff availability than required! Available: {available_shifts}, Required: {required_shifts}")
                 st.markdown(f"Note: {available_shifts - required_shifts} shifts of staff availability will go unused.")
                 st.session_state.allocation_feasible = True
+                
+                # Check if we have the correct number of staff selected for higher shift count
+                if staff_with_higher_count > 0 and len(staff_with_five) != staff_with_higher_count:
+                    st.warning(f"⚠️ You've selected {len(staff_with_five)} staff for {higher_shift_count} shifts, but the optimal allocation requires exactly {staff_with_higher_count} staff.")
+                    st.markdown(f"Please adjust your selection to match the required {staff_with_higher_count} staff members for {higher_shift_count} shifts.")
+                
+                # Next step button for excess availability case
+                st.markdown("### Next Steps")
+                st.markdown("✅ Staff shift configuration complete. Proceed to **Generate Roster** to create the schedule.")
+                if st.button("Continue to Generate Roster", key="to_generate_excess_btn"):
+                    nav_to("Generate Roster")
+                    
             else:
                 st.success(f"Perfect allocation! Available: {available_shifts}, Required: {required_shifts}")
                 st.session_state.allocation_feasible = True
@@ -684,10 +697,10 @@ elif st.session_state.page == "Configure Settings":
                     st.warning(f"⚠️ You've selected {len(staff_with_five)} staff for {higher_shift_count} shifts, but the optimal allocation requires exactly {staff_with_higher_count} staff.")
                     st.markdown(f"Please adjust your selection to match the required {staff_with_higher_count} staff members for {higher_shift_count} shifts.")
                 else:
-                    # Next step button - only show when allocation is feasible
+                    # Next step button for perfect allocation case
                     st.markdown("### Next Steps")
                     st.markdown("✅ Staff shift configuration complete. Proceed to **Generate Roster** to create the schedule.")
-                    if st.button("Continue to Generate Roster", key="to_generate_btn"):
+                    if st.button("Continue to Generate Roster", key="to_generate_perfect_btn"):
                         nav_to("Generate Roster")
 
 elif st.session_state.page == "Generate Roster":
@@ -852,34 +865,56 @@ elif st.session_state.page == "Generate Roster":
                     
                     if not solution:
                         st.session_state.processing_complete = True
-                        st.error("Failed to find a feasible solution. The model is infeasible with the current constraints and availability data.")
+                        st.error("Failed to find a feasible solution. The model is infeasible even with the selected constraint relaxations.")
                         
-                        # Determine which constraints were enabled to provide better guidance
-                        enabled_constraints = []
+                        # Determine which constraints were enabled/disabled to provide better guidance
+                        strict_constraints = []
                         if not allow_consecutive_weekends:
-                            enabled_constraints.append("Staff cannot work consecutive weekends")
+                            strict_constraints.append("Staff cannot work consecutive weekends")
                         if not allow_same_weekend:
-                            enabled_constraints.append("Staff cannot work both days of the same weekend")
+                            strict_constraints.append("Staff cannot work both days of the same weekend")
                         if not relax_acc_requirement:
-                            enabled_constraints.append("Every Saturday must have at least one ACC-trained staff")
+                            strict_constraints.append("Every Saturday must have at least one ACC-trained staff")
+                        
+                        # Create messaging about what relaxations were attempted
+                        relaxation_text = ""
+                        relaxations_attempted = []
+                        if allow_consecutive_weekends:
+                            relaxations_attempted.append("allowing consecutive weekend assignments")
+                        if allow_same_weekend:
+                            relaxations_attempted.append("allowing staff to work both days of the same weekend")
+                        if relax_acc_requirement:
+                            relaxations_attempted.append("allowing Saturdays without ACC-trained staff")
+                        
+                        # Build the message based on what was attempted
+                        if relaxations_attempted:
+                            relaxation_text = f"<p>The solver attempted the following relaxations but still couldn't find a solution: {', '.join(relaxations_attempted)}.</p>"
                         
                         constraint_text = ""
-                        if enabled_constraints:
-                            constraint_text = "<p>The following constraints were enforced and may be making the problem unsolvable:</p><ul>"
-                            for constraint in enabled_constraints:
+                        if strict_constraints:
+                            constraint_text = "<p>The following constraints were strictly enforced and may be making the problem unsolvable:</p><ul>"
+                            for constraint in strict_constraints:
                                 constraint_text += f"<li>{constraint}</li>"
-                            constraint_text += "</ul><p>Consider enabling some of these options in Advanced Options to find a solution.</p>"
+                            constraint_text += "</ul><p>Consider enabling these options in Advanced Options to find a solution.</p>"
                         
                         st.markdown(f"""
                         <div class="warning-box">
-                        <p>The solver could not find a feasible solution. This might be due to:</p>
-                        <ol>
-                          <li>Insufficient staff availability for the required shifts</li>
-                          <li>Conflicting constraints that cannot be satisfied simultaneously</li>
-                          <li>Not enough ACC-trained staff to cover all Saturdays</li>
-                        </ol>
+                        <p>The solver could not find a feasible solution.</p>
+                        {relaxation_text}
                         {constraint_text}
-                        <p>Try adjusting the advanced options or reviewing staff availability data.</p>
+                        <p>This is likely due to:</p>
+                        <ol>
+                          <li><strong>Fundamental staff availability limitations</strong> - There aren't enough available staff to cover all required shifts</li>
+                          <li><strong>Conflicting allocation requirements</strong> - The current shift distribution among staff cannot work with the provided availability</li>
+                          <li><strong>Not enough ACC-trained staff</strong> - There may not be enough ACC-trained staff for all Saturdays</li>
+                        </ol>
+                        <p>Possible solutions:</p>
+                        <ul>
+                          <li>Review and increase staff availability in the input data</li>
+                          <li>Adjust the staff allocation (which staff get lower vs higher shifts)</li>
+                          <li>Enable more constraint relaxations in Advanced Options</li>
+                          <li>Consider adding more staff to the roster</li>
+                        </ul>
                         </div>
                         """, unsafe_allow_html=True)
                     else:
@@ -892,7 +927,8 @@ elif st.session_state.page == "Generate Roster":
                         if model.relaxed_same_weekend:
                             relaxed_constraints.append("No both days on same weekend")
                         
-                        # Store relaxed constraints in session state for display in results
+                        # Store model reference and relaxed constraints in session state for display in results
+                        st.session_state.model = model
                         st.session_state.relaxed_constraints = relaxed_constraints
                         
                         schedule_by_weekend = model.get_schedule_by_weekend()
@@ -1012,12 +1048,45 @@ elif st.session_state.page == "View Results":
                     value=len(set([day[0] for staff_assignments in solution.values() for day, _ in staff_assignments]))
                 )
             
-            # Display information about relaxed constraints if any
+            # Display information about relaxed constraints and ACC coverage
+            st.markdown("#### Solution Details")
+            
+            # Check if any constraints were relaxed
             if hasattr(st.session_state, 'relaxed_constraints') and st.session_state.relaxed_constraints:
-                st.markdown("#### Solution Details")
                 st.markdown("<div class='info-box'>The solver found a solution by relaxing the following constraints:</div>", unsafe_allow_html=True)
                 for constraint in st.session_state.relaxed_constraints:
                     st.markdown(f"- {constraint}")
+            
+            # Display ACC coverage statistics if available
+            if hasattr(st.session_state, 'model') and st.session_state.model.acc_coverage_stats:
+                st.markdown("#### ACC-Trained Staff Coverage")
+                acc_stats = st.session_state.model.acc_coverage_stats
+                coverage_pct = (acc_stats["saturdays_with_acc"] / acc_stats["total_saturdays"]) * 100
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(
+                        "Saturdays with ACC Coverage", 
+                        f"{acc_stats['saturdays_with_acc']}/{acc_stats['total_saturdays']}",
+                        f"{coverage_pct:.1f}%"
+                    )
+                    
+                with col2:
+                    st.metric(
+                        "Coverage Percentage",
+                        f"{coverage_pct:.1f}%"
+                    )
+                
+                # Show details about which Saturdays have no ACC coverage
+                if acc_stats["saturdays_without_acc"]:
+                    st.markdown("<div class='warning-box'>", unsafe_allow_html=True)
+                    st.markdown("⚠️ **Note:** The following weekends have Saturdays without ACC-trained staff coverage:")
+                    # Convert 0-indexed weekends to 1-indexed for display
+                    no_acc_weekends = [w + 1 for w in acc_stats["saturdays_without_acc"]]
+                    st.markdown(f"Weekends: {', '.join([str(w) for w in sorted(no_acc_weekends)])}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<div class='success-box'>✅ All Saturdays have ACC-trained staff coverage.</div>", unsafe_allow_html=True)
             
             # Display staff shift statistics
             st.markdown("#### Staff Shift Allocation")

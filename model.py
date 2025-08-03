@@ -54,9 +54,28 @@ class RosterModel:
         self.relaxed_consecutive_weekends = False
         self.relaxed_same_weekend = False
         self.relaxed_acc_requirement = False
+        
+        # Track ACC coverage statistics
+        self.acc_coverage_stats = None
 
-    def create_model(self) -> None:
-        """Create the linear programming model with all constraints."""
+    def create_model(self, skip_acc_constraints=False, 
+                 skip_consecutive_weekend_constraints=False,
+                 skip_same_weekend_constraints=False) -> None:
+        """Create the linear programming model with specified constraints.
+        
+        Args:
+            skip_acc_constraints: If True, don't add ACC-trained staff constraints
+            skip_consecutive_weekend_constraints: If True, don't add consecutive weekend constraints
+            skip_same_weekend_constraints: If True, don't add same-weekend day constraints
+        """
+        print("Creating linear programming model for roster optimization...")
+        if skip_acc_constraints:
+            print("- Skipping ACC-trained staff constraints")
+        if skip_consecutive_weekend_constraints:
+            print("- Skipping consecutive weekend constraints")
+        if skip_same_weekend_constraints:
+            print("- Skipping same weekend day constraints")
+            
         # Create the LP problem
         self.problem = LpProblem("Pharmacy_Roster_Scheduling", LpMinimize)
         
@@ -172,34 +191,39 @@ class RosterModel:
         
         # Constraint 4: No staff should work consecutive days within the same weekend
         # Use soft constraint with penalties for this requirement
-        print("Adding constraints for consecutive days within same weekend")
-        same_weekend_penalties = {}
+        if not skip_same_weekend_constraints:
+            print("Adding constraints for consecutive days within same weekend")
+            same_weekend_penalties = {}
+            
+            for staff in self.staff_names:
+                for weekend in self.weekends:
+                    sat_day = (weekend, "Saturday")
+                    sun_day = (weekend, "Sunday")
+                    
+                    # Create penalty variable for this staff and weekend
+                    penalty_var = LpVariable(f"same_weekend_penalty_{staff}_{weekend}", 0, 1, LpBinary)
+                    same_weekend_penalties[(staff, weekend)] = penalty_var
+                    
+                    # Sum of shifts on Saturday and Sunday for this weekend
+                    sat_shifts = pulp.lpSum(self.assignments.get((staff, sat_day, shift), 0) 
+                                          for shift in self.shifts)
+                    sun_shifts = pulp.lpSum(self.assignments.get((staff, sun_day, shift), 0) 
+                                          for shift in self.shifts)
+                    
+                    # Staff can only work on one day of the weekend unless penalty is applied
+                    self.problem += (
+                        sat_shifts + sun_shifts <= 1 + penalty_var,
+                        f"No_consecutive_days_in_weekend_{staff}_{weekend}"
+                    )
+                    
+            # Add penalties to objective function (to minimize violations)
+            same_weekend_penalty_sum = pulp.lpSum(same_weekend_penalties.values())
+            self.problem += same_weekend_penalty_sum * 2  # Add to objective with higher weight
+            print(f"Added {len(same_weekend_penalties)} soft constraints for consecutive days within same weekend")
+        else:
+            print("Skipping same weekend day constraints as requested")
         
-        for staff in self.staff_names:
-            for weekend in self.weekends:
-                sat_day = (weekend, "Saturday")
-                sun_day = (weekend, "Sunday")
-                
-                # Create penalty variable for this staff and weekend
-                penalty_var = LpVariable(f"same_weekend_penalty_{staff}_{weekend}", 0, 1, LpBinary)
-                same_weekend_penalties[(staff, weekend)] = penalty_var
-                
-                # Sum of shifts on Saturday and Sunday for this weekend
-                sat_shifts = pulp.lpSum(self.assignments.get((staff, sat_day, shift), 0) 
-                                      for shift in self.shifts)
-                sun_shifts = pulp.lpSum(self.assignments.get((staff, sun_day, shift), 0) 
-                                      for shift in self.shifts)
-                
-                # Staff can only work on one day of the weekend unless penalty is applied
-                self.problem += (
-                    sat_shifts + sun_shifts <= 1 + penalty_var,
-                    f"No_consecutive_days_in_weekend_{staff}_{weekend}"
-                )
-        
-        # Add penalties to objective function (to minimize violations)
-        same_weekend_penalty_sum = pulp.lpSum(same_weekend_penalties.values())
-        self.problem += same_weekend_penalty_sum * 2  # Add to objective with higher weight
-        print(f"Added {len(same_weekend_penalties)} soft constraints for consecutive days within same weekend")
+        # Note: The penalties are now added inside the if not skip_same_weekend_constraints block
         
         # Constraint 5: Link weekend assignment variables
         for staff in self.staff_names:
@@ -224,52 +248,55 @@ class RosterModel:
                 )
         
         # Constraint 6: No consecutive weekend assignments
-        # First check if this constraint might be too restrictive
-        avg_shifts_per_staff = sum(self.staff_shifts.values()) / len(self.staff_names)
-        weekends_per_staff = avg_shifts_per_staff / 3  # Assuming 3 shifts per weekend
-        weekends_ratio = weekends_per_staff / len(self.weekends)
-        
-        print(f"Weekends needed per staff: {weekends_per_staff:.2f} out of {len(self.weekends)} ({weekends_ratio:.2%})")
-        
-        # If the ratio is high, relax the constraint to allow some consecutive weekends
-        if weekends_ratio > 0.4:  # More than 40% of weekends needed, might be hard to avoid consecutive weekends
-            print("WARNING: Staff might need to work many weekends. Relaxing consecutive weekend constraint.")
-            # Use a soft constraint with penalties instead
-            consecutive_penalties = {}
-            for staff in self.staff_names:
-                for i, weekend in enumerate(sorted(self.weekends)[:-1]):
-                    next_weekend = sorted(self.weekends)[i+1]
-                    penalty_var = LpVariable(f"consec_penalty_{staff}_{weekend}_{next_weekend}", 0, 1, LpBinary)
-                    consecutive_penalties[(staff, weekend, next_weekend)] = penalty_var
-                    
-                    # Link penalty variable to consecutive weekends
-                    self.problem += (
-                        weekend_assignments[(staff, weekend)] + 
-                        weekend_assignments[(staff, next_weekend)] <= 1 + penalty_var,
-                        f"Consec_weekend_link_{staff}_{weekend}_{next_weekend}"
-                    )
+        if not skip_consecutive_weekend_constraints:
+            # First check if this constraint might be too restrictive
+            avg_shifts_per_staff = sum(self.staff_shifts.values()) / len(self.staff_names)
+            weekends_per_staff = avg_shifts_per_staff / 3  # Assuming 3 shifts per weekend
+            weekends_ratio = weekends_per_staff / len(self.weekends)
             
-            # Add penalties to objective function
-            penalty_sum = pulp.lpSum(consecutive_penalties.values())
-            self.problem += penalty_sum  # Add to the objective (which was just a dummy variable)
-            print(f"Added {len(consecutive_penalties)} soft constraints for consecutive weekends")
+            print(f"Weekends needed per staff: {weekends_per_staff:.2f} out of {len(self.weekends)} ({weekends_ratio:.2%})")
+            
+            # If the ratio is high, relax the constraint to allow some consecutive weekends
+            if weekends_ratio > 0.4:  # More than 40% of weekends needed, might be hard to avoid consecutive weekends
+                print("WARNING: Staff might need to work many weekends. Relaxing consecutive weekend constraint.")
+                # Use a soft constraint with penalties instead
+                consecutive_penalties = {}
+                for staff in self.staff_names:
+                    for i, weekend in enumerate(sorted(self.weekends)[:-1]):
+                        next_weekend = sorted(self.weekends)[i+1]
+                        penalty_var = LpVariable(f"consec_penalty_{staff}_{weekend}_{next_weekend}", 0, 1, LpBinary)
+                        consecutive_penalties[(staff, weekend, next_weekend)] = penalty_var
+                        
+                        # Link penalty variable to consecutive weekends
+                        self.problem += (
+                            weekend_assignments[(staff, weekend)] + 
+                            weekend_assignments[(staff, next_weekend)] <= 1 + penalty_var,
+                            f"Consec_weekend_link_{staff}_{weekend}_{next_weekend}"
+                        )
+                
+                # Add penalties to objective function
+                penalty_sum = pulp.lpSum(consecutive_penalties.values())
+                self.problem += penalty_sum  # Add to the objective (which was just a dummy variable)
+                print(f"Added {len(consecutive_penalties)} soft constraints for consecutive weekends")
+            else:
+                # Use hard constraints as before
+                for staff in self.staff_names:
+                    for i, weekend in enumerate(sorted(self.weekends)[:-1]):
+                        next_weekend = sorted(self.weekends)[i+1]
+                        self.problem += (
+                            weekend_assignments[(staff, weekend)] + 
+                            weekend_assignments[(staff, next_weekend)] <= 1,
+                            f"No_consecutive_weekends_{staff}_{weekend}_{next_weekend}"
+                        )
         else:
-            # Use hard constraints as before
-            for staff in self.staff_names:
-                for i, weekend in enumerate(sorted(self.weekends)[:-1]):
-                    next_weekend = sorted(self.weekends)[i+1]
-                    self.problem += (
-                        weekend_assignments[(staff, weekend)] + 
-                        weekend_assignments[(staff, next_weekend)] <= 1,
-                        f"No_consecutive_weekends_{staff}_{weekend}_{next_weekend}"
-                    )
+            print("Skipping consecutive weekend constraints as requested")
         
         # Constraint 7: ACC-trained staff on Saturday (soft constraint)
         # We'll use a binary variable to track if an ACC staff is assigned on each Saturday
         acc_coverage = {}
         
-        # Only apply ACC coverage constraint if we have ACC-trained staff
-        if len(self.acc_trained_staff) > 0:
+        # Only apply ACC coverage constraint if we have ACC-trained staff and the constraint is not skipped
+        if not skip_acc_constraints and len(self.acc_trained_staff) > 0:
             print(f"Adding ACC coverage constraints with {len(self.acc_trained_staff)} ACC-trained staff")
             for weekend in self.weekends:
                 acc_coverage[weekend] = LpVariable(f"acc_coverage_{weekend}", cat=LpBinary)
@@ -289,6 +316,8 @@ class RosterModel:
                     acc_coverage[weekend] == 1,
                     f"ACC_coverage_Saturday_{weekend}"
                 )
+        elif skip_acc_constraints:
+            print("Skipping ACC-trained staff constraints as requested")
         else:
             print("No ACC-trained staff found, skipping ACC coverage constraint")
 
@@ -303,17 +332,81 @@ class RosterModel:
                     if var and var.value() == 1:
                         roster[staff].append((day, shift))
         
+        # Count Saturdays with ACC coverage
+        if len(self.acc_trained_staff) > 0:
+            saturdays_with_acc = 0
+            saturdays_without_acc = []
+            total_saturdays = len(self.weekends)
+            
+            for weekend in self.weekends:
+                has_acc = False
+                for staff in self.acc_trained_staff:
+                    for shift in self.shifts:
+                        var = self.assignments.get((staff, (weekend, "Saturday"), shift))
+                        if var and var.value() == 1:
+                            has_acc = True
+                            break
+                    if has_acc:
+                        break
+                        
+                if has_acc:
+                    saturdays_with_acc += 1
+                else:
+                    saturdays_without_acc.append(weekend)
+            
+            print(f"ACC coverage achieved on {saturdays_with_acc}/{total_saturdays} Saturdays")
+            if saturdays_without_acc:
+                print(f"Saturdays without ACC coverage: {saturdays_without_acc}")
+                
+            self.acc_coverage_stats = {
+                "saturdays_with_acc": saturdays_with_acc,
+                "total_saturdays": total_saturdays,
+                "saturdays_without_acc": saturdays_without_acc
+            }
+        
         self.results = roster
         return roster
 
     def _relax_acc_constraints(self) -> None:
-        """Relax ACC-trained staff constraints."""
-        # Find and remove the ACC coverage constraints
+        """Relax ACC-trained staff constraints to a best-effort approach."""
+        # Find and remove the hard ACC coverage constraints
         acc_constraints = [c for c in self.problem.constraints if "ACC_coverage_Saturday" in c]
         for c in acc_constraints:
             del self.problem.constraints[c]
         
-        print(f"Removed {len(acc_constraints)} ACC coverage constraints")
+        print(f"Converting {len(acc_constraints)} hard ACC constraints to soft constraints")
+        
+        # Add soft constraints with penalties
+        if len(self.acc_trained_staff) > 0:
+            acc_penalties = {}
+            
+            # For each weekend
+            for weekend in self.weekends:
+                # Create a penalty variable for this weekend
+                penalty_var = LpVariable(f"acc_penalty_{weekend}", 0, 1, LpBinary)
+                acc_penalties[weekend] = penalty_var
+                
+                # Find the existing acc_coverage variable for this weekend
+                acc_var = None
+                for var in self.problem.variables():
+                    if var.name == f"acc_coverage_{weekend}":
+                        acc_var = var
+                        break
+                
+                if acc_var:
+                    # Add soft constraint: acc_coverage + penalty = 1
+                    # This means: either we have ACC coverage (acc_coverage=1, penalty=0)
+                    # or we don't (acc_coverage=0, penalty=1)
+                    self.problem += (
+                        acc_var + penalty_var == 1,
+                        f"ACC_coverage_soft_{weekend}"
+                    )
+            
+            # Add penalties to objective function with high weight to prioritize ACC coverage
+            if acc_penalties:
+                penalty_sum = pulp.lpSum(acc_penalties.values())
+                self.problem += penalty_sum * 5  # Higher weight than other penalties
+                print(f"Added {len(acc_penalties)} soft constraints for ACC coverage")
     
     def _relax_consecutive_weekend_constraints(self) -> None:
         """Relax consecutive weekend constraints."""
@@ -333,12 +426,18 @@ class RosterModel:
             weekend_assignments = {}
             for var in self.problem.variables():
                 if var.name.startswith("y_"):
-                    # Parse variable name to get staff and weekend
-                    parts = var.name.split("_")
-                    if len(parts) >= 3:
-                        staff = parts[1]
-                        weekend = int(parts[2])
-                        weekend_assignments[(staff, weekend)] = var
+                    try:
+                        # Parse variable name to get staff and weekend
+                        parts = var.name.split("_")
+                        if len(parts) >= 3:
+                            # The weekend number is always the last element after splitting
+                            weekend = int(parts[-1])  # Use the last part as weekend
+                            # Reconstruct staff name by joining all middle parts
+                            staff = "_".join(parts[1:-1])  # Join all parts between prefix and weekend
+                            weekend_assignments[(staff, weekend)] = var
+                    except ValueError as e:
+                        print(f"Warning: Could not parse variable name '{var.name}': {e}")
+                        continue
             
             # Add soft constraints
             for staff in self.staff_names:
@@ -372,6 +471,7 @@ class RosterModel:
     def solve(self) -> Dict:
         """
         Solve the linear programming model with tiered relaxation approach.
+        Uses separate model instances for each relaxation tier to avoid solver errors.
         
         Returns:
             Dict: The staff roster solution or empty dict if no solution found
@@ -381,9 +481,10 @@ class RosterModel:
         self.relaxed_same_weekend = False
         self.relaxed_acc_requirement = False
         
-        # Create and solve the model with full constraints
-        if not self.problem:
-            self.create_model()
+        # Tier 1: Solve with strict constraints
+        print("Tier 1: Attempting to solve with all constraints...")
+        self.problem = None  # Reset problem to ensure fresh start
+        self.create_model()  # Create model with all constraints
         
         # Configure solver parameters
         solver = pulp.PULP_CBC_CMD(
@@ -393,53 +494,83 @@ class RosterModel:
             options=['presolve on', 'strong branching on', 'cuts on']
         )
         
-        # Tier 1: Try to solve with all constraints
-        print("Tier 1: Attempting to solve with all constraints...")
-        self.problem.solve(solver)
-        
-        # If optimal solution found, return it
-        if LpStatus[self.problem.status] == "Optimal":
-            print("Found optimal solution with all constraints satisfied!")
-            return self._extract_results()
+        try:
+            self.problem.solve(solver)
+            
+            # If optimal solution found, return it
+            if LpStatus[self.problem.status] == "Optimal":
+                print("Found optimal solution with all constraints satisfied!")
+                return self._extract_results()
+        except Exception as e:
+            print(f"Error in Tier 1 solve: {e}")
         
         # Tier 2: Relax ACC-trained staff requirement if allowed
         if self.relax_acc_requirement:
-            print("Tier 2: Relaxing ACC-trained staff requirement...")
-            self._relax_acc_constraints()
-            self.problem.solve(solver)
-            
-            if LpStatus[self.problem.status] == "Optimal":
-                print("Found solution after relaxing ACC-trained staff requirement")
-                self.relaxed_acc_requirement = True
-                return self._extract_results()
+            print("Tier 2: Creating new model with relaxed ACC staff requirement...")
+            try:
+                # Create a new model without ACC constraints
+                self.problem = None  # Reset problem
+                self.create_model(skip_acc_constraints=True)
+                
+                self.problem.solve(solver)
+                
+                if LpStatus[self.problem.status] == "Optimal":
+                    print("Found solution after relaxing ACC-trained staff requirement")
+                    self.relaxed_acc_requirement = True
+                    return self._extract_results()
+            except Exception as e:
+                print(f"Error in Tier 2 solve: {e}")
         else:
             print("ACC constraint relaxation disabled by user - skipping tier 2")
         
-        # Tier 3: Also relax weekend constraints if allowed
+        # Tier 3: Relax weekend constraints if allowed
         if self.allow_consecutive_weekends or self.allow_same_weekend:
-            print("Tier 3: Relaxing additional constraints...")
+            print("Tier 3: Creating new model with multiple relaxed constraints...")
             
-            if self.allow_consecutive_weekends:
-                print("- Relaxing consecutive weekend constraints")
-                self._relax_consecutive_weekend_constraints()
-                self.relaxed_consecutive_weekends = True
+            # Track which constraints to skip
+            skip_acc = self.relax_acc_requirement
+            skip_consecutive = self.allow_consecutive_weekends
+            skip_same_weekend = self.allow_same_weekend
             
-            if self.allow_same_weekend:
-                print("- Relaxing same weekend day constraints")
-                self._relax_same_weekend_constraints()
-                self.relaxed_same_weekend = True
-            
-            # Try solving with relaxed constraints
-            self.problem.solve(solver)
-            
-            if LpStatus[self.problem.status] == "Optimal":
-                print("Found solution after relaxing additional constraints")
-                return self._extract_results()
+            try:
+                # Create a new model with appropriate constraints skipped
+                self.problem = None  # Reset problem
+                self.create_model(
+                    skip_acc_constraints=skip_acc,
+                    skip_consecutive_weekend_constraints=skip_consecutive,
+                    skip_same_weekend_constraints=skip_same_weekend
+                )
+                
+                self.problem.solve(solver)
+                
+                if LpStatus[self.problem.status] == "Optimal":
+                    print("Found solution with relaxed constraints")
+                    if skip_acc:
+                        self.relaxed_acc_requirement = True
+                    if skip_consecutive:
+                        self.relaxed_consecutive_weekends = True
+                    if skip_same_weekend:
+                        self.relaxed_same_weekend = True
+                    return self._extract_results()
+            except Exception as e:
+                print(f"Error in Tier 3 solve: {e}")
         else:
             print("Weekend constraint relaxation disabled by user - skipping tier 3")
         
         # If we get here, no solution was found with the allowed relaxations
-        print(f"No solution found with the allowed constraint relaxations. Status: {LpStatus[self.problem.status]}")
+        attempted_relaxations = []
+        if self.relax_acc_requirement:
+            attempted_relaxations.append("ACC staff requirements")
+        if self.allow_consecutive_weekends:
+            attempted_relaxations.append("consecutive weekend constraints")
+        if self.allow_same_weekend:
+            attempted_relaxations.append("same weekend day constraints")
+            
+        if attempted_relaxations:
+            print(f"No solution found even after relaxing: {', '.join(attempted_relaxations)}")
+        else:
+            print("No solution found with strict constraints (no relaxations were allowed)")
+            
         return {}
         
         # Extract results
@@ -454,6 +585,14 @@ class RosterModel:
         
         self.results = roster
         return roster
+    
+    def get_acc_coverage_stats(self) -> Dict:
+        """Get statistics on ACC-trained staff coverage on Saturdays.
+        
+        Returns:
+            Dict: Statistics about ACC coverage or None if not applicable
+        """
+        return self.acc_coverage_stats
     
     def get_schedule_by_weekend(self) -> Dict[Tuple[int, str], Dict[str, str]]:
         """
