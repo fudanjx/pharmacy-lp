@@ -160,6 +160,17 @@ In the web interface, users can control which constraints can be relaxed through
 
 The results page will indicate which constraints were relaxed to find a solution.
 
+### Best Effort ACC Coverage
+
+The system uses a "best effort" approach to maintain ACC-trained staff coverage on Saturdays even when full coverage is not possible:
+
+- When ACC constraints need to be relaxed, the system doesn't simply abandon the requirement
+- Instead, it converts them to soft constraints with penalties to maximize coverage where possible
+- The solver prioritizes assigning ACC-trained staff to as many Saturdays as possible
+- Results show clear statistics about ACC coverage, including which Saturdays (if any) don't have coverage
+
+This approach ensures optimal distribution of specialized staff even when constraints must be relaxed.
+
 ## Input Data Format
 
 The application expects an Excel file (`Availability.xls`) with:
@@ -213,15 +224,17 @@ flake8
 ```
 
 ## License & Usage
-This project is released under the MIT License.
+This project is released under a Custom License for Non-Commercial Use. See the [LICENSE](LICENSE) file for complete details.
 
-✅ Free to Use: You are welcome to use, copy, modify, and distribute this code for personal projects, research, or educational purposes.
+✅ **Educational & Research Use**: You are welcome to use, copy, modify, and distribute this code for educational and research purposes.
 
-⚠️ Non-Commercial Use Only: Commercial usage (including but not limited to selling, integrating into paid products or services, or using it for profit-driven purposes) is strictly prohibited without prior written permission from the author.
+⚠️ **Commercial Use Prohibited**: Commercial usage (including but not limited to selling, integrating into paid products or services, or using it for profit-driven purposes) is strictly prohibited without prior written permission from the copyright holder.
 
-🔒 Attribution Required: If you use this code in your project, please provide proper attribution with a link back to this repository.
+🔒 **Attribution Required**: All usage must include appropriate attribution to the original authors by retaining the License, copyright notices, and disclaimers.
 
-By using this code, you agree to comply with these terms. Unauthorized commercial exploitation may result in legal action.
+📧 **Commercial Licensing**: For commercial use permissions, please contact the copyright holder by opening an issue in this repository.
+
+By using this software, you agree to comply with these terms. Unauthorized commercial exploitation may result in legal action.
 
 ## Acknowledgments
 
