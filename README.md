@@ -145,6 +145,21 @@ The schedule optimizes for the following constraints:
 - Staff should not work on both Saturday and Sunday of the same weekend
 - At least one ACC-trained staff member should be scheduled for Saturdays
 
+### Tiered Constraint Relaxation
+
+The solver implements an intelligent tiered relaxation approach when no feasible solution can be found with all constraints enforced:
+
+1. **Tier 1**: First attempts to solve with all constraints enforced
+2. **Tier 2**: If no solution found, relaxes the ACC-trained staff requirement (if allowed)
+3. **Tier 3**: If still no solution, also relaxes consecutive weekend constraints and/or same weekend constraints (if allowed)
+
+In the web interface, users can control which constraints can be relaxed through the Advanced Options:
+- **Allow Consecutive Weekends if Needed**: Allows staff to work consecutive weekends when necessary
+- **Allow Both Days on Same Weekend if Needed**: Allows staff to work both days of the same weekend when necessary
+- **ACC staff are not mandatory for every Saturday**: Allows Saturdays without ACC-trained staff when necessary
+
+The results page will indicate which constraints were relaxed to find a solution.
+
 ## Input Data Format
 
 The application expects an Excel file (`Availability.xls`) with:
@@ -165,6 +180,10 @@ When the `--visualize` flag is used, the program generates:
 - Shift distribution chart - Bar chart showing shifts per staff member
 - Weekend heatmap - Visual representation of which weekends each staff works
 - Shift type distribution - Stacked bar chart showing early/mid/late shift distribution
+
+The web interface includes additional visualizations:
+- Staff availability heatmap - Visual representation of submitted staff availability
+- Interactive filtering options for all visualization types
 
 ## Project Structure
 

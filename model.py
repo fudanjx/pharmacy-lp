@@ -17,7 +17,9 @@ class RosterModel:
                  availability: Dict[str, Dict[Tuple[int, str], List[str]]],
                  acc_trained_staff: Set[str],
                  staff_shifts: Dict[str, int],
-                 relax_constraints: bool = False):
+                 allow_consecutive_weekends: bool = True,
+                 allow_same_weekend: bool = True,
+                 relax_acc_requirement: bool = True):
         """
         Initialize the RosterModel with necessary data.
 
@@ -43,8 +45,15 @@ class RosterModel:
         # Will store the results
         self.results = {}
         
-        # Flag to control whether constraints can be relaxed
-        self.relax_constraints = relax_constraints
+        # Flags to control which constraints can be relaxed (based on user options)
+        self.allow_consecutive_weekends = allow_consecutive_weekends
+        self.allow_same_weekend = allow_same_weekend
+        self.relax_acc_requirement = relax_acc_requirement
+        
+        # Track which constraints were relaxed in the final solution
+        self.relaxed_consecutive_weekends = False
+        self.relaxed_same_weekend = False
+        self.relaxed_acc_requirement = False
 
     def create_model(self) -> None:
         """Create the linear programming model with all constraints."""
@@ -283,19 +292,39 @@ class RosterModel:
         else:
             print("No ACC-trained staff found, skipping ACC coverage constraint")
 
-    def _relax_constraints(self) -> None:
-        """Relax hard constraints to make model easier to solve"""
-        # Identify and relax problematic constraints
-        # We'll focus on the consecutive weekends constraints as they're often problematic
+    def _extract_results(self) -> Dict:
+        """Extract the results from the solved model."""
+        roster = {}
+        for staff in self.staff_names:
+            roster[staff] = []
+            for day in self.weekend_days:
+                for shift in self.shifts:
+                    var = self.assignments.get((staff, day, shift))
+                    if var and var.value() == 1:
+                        roster[staff].append((day, shift))
         
-        # Look for constraints with 'No_consecutive_weekends' in the name and remove them
+        self.results = roster
+        return roster
+
+    def _relax_acc_constraints(self) -> None:
+        """Relax ACC-trained staff constraints."""
+        # Find and remove the ACC coverage constraints
+        acc_constraints = [c for c in self.problem.constraints if "ACC_coverage_Saturday" in c]
+        for c in acc_constraints:
+            del self.problem.constraints[c]
+        
+        print(f"Removed {len(acc_constraints)} ACC coverage constraints")
+    
+    def _relax_consecutive_weekend_constraints(self) -> None:
+        """Relax consecutive weekend constraints."""
+        # Find and remove hard consecutive weekend constraints
         consec_constraints = [c for c in self.problem.constraints if "No_consecutive_weekends" in c]
         for c in consec_constraints:
             del self.problem.constraints[c]
             
-        print(f"Removed {len(consec_constraints)} hard consecutive weekend constraints")
+        print(f"Removed {len(consec_constraints)} consecutive weekend constraints")
         
-        # Replace with soft constraints if they don't exist yet
+        # Replace with soft constraints (with penalties)
         if not any("consec_penalty" in str(v) for v in self.problem.variables()):
             print("Adding soft consecutive weekend constraints instead")
             consecutive_penalties = {}
@@ -330,48 +359,88 @@ class RosterModel:
             if consecutive_penalties:
                 penalty_sum = pulp.lpSum(consecutive_penalties.values())
                 self.problem += penalty_sum * 2  # Add to the objective with weight
+                
+    def _relax_same_weekend_constraints(self) -> None:
+        """Relax constraints that prevent staff from working both days of the same weekend."""
+        # Find and remove constraints that prevent staff from working both days of the same weekend
+        same_weekend_constraints = [c for c in self.problem.constraints if "No_consecutive_days_in_weekend" in c]
+        for c in same_weekend_constraints:
+            del self.problem.constraints[c]
+            
+        print(f"Removed {len(same_weekend_constraints)} same weekend day constraints")
 
     def solve(self) -> Dict:
         """
-        Solve the linear programming model.
+        Solve the linear programming model with tiered relaxation approach.
         
         Returns:
-            Dict: The staff roster solution
+            Dict: The staff roster solution or empty dict if no solution found
         """
+        # Reset relaxation tracking flags
+        self.relaxed_consecutive_weekends = False
+        self.relaxed_same_weekend = False
+        self.relaxed_acc_requirement = False
+        
+        # Create and solve the model with full constraints
         if not self.problem:
             self.create_model()
         
-        # Solve the problem with optimized solver parameters
+        # Configure solver parameters
         solver = pulp.PULP_CBC_CMD(
             msg=True,             # Show messages for debugging
             timeLimit=120,        # Allow 2 minutes to solve
             gapRel=0.05,         # Accept solutions within 5% of optimal
             options=['presolve on', 'strong branching on', 'cuts on']
         )
+        
+        # Tier 1: Try to solve with all constraints
+        print("Tier 1: Attempting to solve with all constraints...")
         self.problem.solve(solver)
         
-        # Check if a solution was found
-        if LpStatus[self.problem.status] != "Optimal":
-            print(f"No optimal solution found. Status: {LpStatus[self.problem.status]}")
+        # If optimal solution found, return it
+        if LpStatus[self.problem.status] == "Optimal":
+            print("Found optimal solution with all constraints satisfied!")
+            return self._extract_results()
+        
+        # Tier 2: Relax ACC-trained staff requirement if allowed
+        if self.relax_acc_requirement:
+            print("Tier 2: Relaxing ACC-trained staff requirement...")
+            self._relax_acc_constraints()
+            self.problem.solve(solver)
             
-            # Only relax constraints if explicitly allowed （this is for the newer version)
-            if self.relax_constraints:
-                print("Relaxing constraints was enabled - attempting to relax constraints and solve again...")
-                
-                # Relax the hard constraints for consecutive weekends to make them soft
-                self._relax_constraints()
-                
-                # Try solving again
-                self.problem.solve(solver)
-                
-                if LpStatus[self.problem.status] != "Optimal":
-                    print(f"Still no optimal solution after relaxing constraints. Status: {LpStatus[self.problem.status]}")
-                    return {}
-                else:
-                    print("Found solution after relaxing constraints")
-            else:
-                print("Constraint relaxation is disabled. To enable, use the relax_constraints=True parameter.")
-                return {}
+            if LpStatus[self.problem.status] == "Optimal":
+                print("Found solution after relaxing ACC-trained staff requirement")
+                self.relaxed_acc_requirement = True
+                return self._extract_results()
+        else:
+            print("ACC constraint relaxation disabled by user - skipping tier 2")
+        
+        # Tier 3: Also relax weekend constraints if allowed
+        if self.allow_consecutive_weekends or self.allow_same_weekend:
+            print("Tier 3: Relaxing additional constraints...")
+            
+            if self.allow_consecutive_weekends:
+                print("- Relaxing consecutive weekend constraints")
+                self._relax_consecutive_weekend_constraints()
+                self.relaxed_consecutive_weekends = True
+            
+            if self.allow_same_weekend:
+                print("- Relaxing same weekend day constraints")
+                self._relax_same_weekend_constraints()
+                self.relaxed_same_weekend = True
+            
+            # Try solving with relaxed constraints
+            self.problem.solve(solver)
+            
+            if LpStatus[self.problem.status] == "Optimal":
+                print("Found solution after relaxing additional constraints")
+                return self._extract_results()
+        else:
+            print("Weekend constraint relaxation disabled by user - skipping tier 3")
+        
+        # If we get here, no solution was found with the allowed relaxations
+        print(f"No solution found with the allowed constraint relaxations. Status: {LpStatus[self.problem.status]}")
+        return {}
         
         # Extract results
         roster = {}

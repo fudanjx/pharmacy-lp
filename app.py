@@ -180,6 +180,8 @@ if 'output_file' not in st.session_state:
     st.session_state.output_file = None
 if 'schedule_summary' not in st.session_state:
     st.session_state.schedule_summary = None
+if 'relaxed_constraints' not in st.session_state:
+    st.session_state.relaxed_constraints = []
 
 # Main application layout with sidebar and tabs
 with st.sidebar:
@@ -299,6 +301,31 @@ elif st.session_state.page == "Upload Data":
             # Display preview of the data
             st.markdown("### Data Preview")
             st.dataframe(df.head(5), use_container_width=True)
+            
+            # Add availability heatmap visualization
+            st.markdown("### Staff Availability Heatmap")
+            st.info("This heatmap shows staff availability for each weekend day. Blue indicates available, white indicates unavailable.")
+            
+            # Process availability data for visualization
+            # We need columns starting from index 2 (after staff name and ACC columns)
+            availability_df = df.iloc[:, 2:].copy()
+            availability_df.index = df.iloc[:, 0]  # Use staff names as index
+            
+            # Create heatmap using Plotly
+            fig = px.imshow(
+                availability_df,
+                color_continuous_scale="Blues",
+                aspect="auto", 
+                labels=dict(x="Weekend Day", y="Staff", color="Available"),
+                title="Staff Availability"
+            )
+            
+            # Add date information to hover tooltip
+            fig.update_traces(hovertemplate="Staff: %{y}<br>Date: %{x}<br>Available: %{z}")
+            fig.update_layout(height=500)
+            
+            # Display the heatmap
+            st.plotly_chart(fig, use_container_width=True)
             
             # Extract staff names and ACC information
             # Extract staff names and convert to strings to ensure consistent typing
@@ -663,10 +690,10 @@ elif st.session_state.page == "Generate Roster":
                 help="If checked, the model can assign both Saturday and Sunday of the same weekend to a staff member if necessary"
             )
             
-            require_acc = st.checkbox(
-                "Require ACC Staff on Saturdays", 
+            relax_acc_requirement = st.checkbox(
+                "ACC staff are not mandatory for every Saturday", 
                 value=True, 
-                help="If checked, the model will try to ensure at least one ACC-trained staff member is scheduled for each Saturday"
+                help="If checked, the model can schedule Saturdays without ACC-trained staff when necessary to find a solution"
             )
         
         # Button to generate roster
@@ -753,7 +780,10 @@ elif st.session_state.page == "Generate Roster":
                         loader.get_weekend_days(),
                         loader.get_availability(),
                         loader.get_acc_trained_staff(),
-                        loader.staff_shifts
+                        loader.staff_shifts,
+                        allow_consecutive_weekends,
+                        allow_same_weekend,
+                        relax_acc_requirement
                     )
                     
                     model.create_model()
@@ -762,17 +792,48 @@ elif st.session_state.page == "Generate Roster":
                     if not solution:
                         st.session_state.processing_complete = True
                         st.error("Failed to find a feasible solution. The model is infeasible with the current constraints and availability data.")
-                        st.markdown("""
-                        <div class="warning-box">
-                        The solver could not find a feasible solution. This might be due to:
-                        1. Insufficient staff availability for the required shifts
-                        2. Conflicting constraints that cannot be satisfied simultaneously
-                        3. Not enough ACC-trained staff to cover all Saturdays
                         
-                        Try adjusting the advanced options or reviewing staff availability data.
+                        # Determine which constraints were enabled to provide better guidance
+                        enabled_constraints = []
+                        if not allow_consecutive_weekends:
+                            enabled_constraints.append("Staff cannot work consecutive weekends")
+                        if not allow_same_weekend:
+                            enabled_constraints.append("Staff cannot work both days of the same weekend")
+                        if not relax_acc_requirement:
+                            enabled_constraints.append("Every Saturday must have at least one ACC-trained staff")
+                        
+                        constraint_text = ""
+                        if enabled_constraints:
+                            constraint_text = "<p>The following constraints were enforced and may be making the problem unsolvable:</p><ul>"
+                            for constraint in enabled_constraints:
+                                constraint_text += f"<li>{constraint}</li>"
+                            constraint_text += "</ul><p>Consider enabling some of these options in Advanced Options to find a solution.</p>"
+                        
+                        st.markdown(f"""
+                        <div class="warning-box">
+                        <p>The solver could not find a feasible solution. This might be due to:</p>
+                        <ol>
+                          <li>Insufficient staff availability for the required shifts</li>
+                          <li>Conflicting constraints that cannot be satisfied simultaneously</li>
+                          <li>Not enough ACC-trained staff to cover all Saturdays</li>
+                        </ol>
+                        {constraint_text}
+                        <p>Try adjusting the advanced options or reviewing staff availability data.</p>
                         </div>
                         """, unsafe_allow_html=True)
                     else:
+                        # Check which constraints were relaxed
+                        relaxed_constraints = []
+                        if model.relaxed_acc_requirement:
+                            relaxed_constraints.append("ACC staff coverage on Saturdays")
+                        if model.relaxed_consecutive_weekends:
+                            relaxed_constraints.append("No consecutive weekends")
+                        if model.relaxed_same_weekend:
+                            relaxed_constraints.append("No both days on same weekend")
+                        
+                        # Store relaxed constraints in session state for display in results
+                        st.session_state.relaxed_constraints = relaxed_constraints
+                        
                         schedule_by_weekend = model.get_schedule_by_weekend()
                         
                         # Step 4: Generate roster
@@ -889,6 +950,13 @@ elif st.session_state.page == "View Results":
                     label="Total Weekends", 
                     value=len(set([day[0] for staff_assignments in solution.values() for day, _ in staff_assignments]))
                 )
+            
+            # Display information about relaxed constraints if any
+            if hasattr(st.session_state, 'relaxed_constraints') and st.session_state.relaxed_constraints:
+                st.markdown("#### Solution Details")
+                st.markdown("<div class='info-box'>The solver found a solution by relaxing the following constraints:</div>", unsafe_allow_html=True)
+                for constraint in st.session_state.relaxed_constraints:
+                    st.markdown(f"- {constraint}")
             
             # Display staff shift statistics
             st.markdown("#### Staff Shift Allocation")
