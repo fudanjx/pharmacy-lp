@@ -7,6 +7,8 @@
 # Exclude the debug folder
 debug/
 
+__pycache__/
+
 # Exclude the visualizations folder
 visualizations/
 

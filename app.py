@@ -108,6 +108,7 @@ def reset_app():
     st.session_state.staff_with_four_shifts = []
     st.session_state.availability_df = None
     st.session_state.uploaded_file = None
+    st.session_state.allocation_feasible = False
     
     # Refresh the page
     st.rerun()
@@ -182,16 +183,73 @@ if 'schedule_summary' not in st.session_state:
     st.session_state.schedule_summary = None
 if 'relaxed_constraints' not in st.session_state:
     st.session_state.relaxed_constraints = []
+if 'allocation_feasible' not in st.session_state:
+    st.session_state.allocation_feasible = False
 
 # Main application layout with sidebar and tabs
 with st.sidebar:
     st.header("Navigation")
-    selected_page = st.radio("Go to", app_pages, index=app_pages.index(st.session_state.page))
+    
+    # Generate a list of pages that are accessible
+    accessible_pages = []
+    
+    # Introduction is always accessible
+    accessible_pages.append("Introduction")
+    
+    # Upload Data is accessible if Introduction is complete
+    accessible_pages.append("Upload Data")
+    
+    # Configure Settings is accessible if data is uploaded
+    if st.session_state.availability_df is not None:
+        accessible_pages.append("Configure Settings")
+    
+    # Generate Roster is accessible if configuration is complete AND allocation is feasible
+    if (st.session_state.staff_with_four_shifts is not None and 
+        len(st.session_state.staff_with_four_shifts) > 0 and 
+        st.session_state.allocation_feasible):
+        accessible_pages.append("Generate Roster")
+    
+    # View Results is accessible if a schedule has been generated
+    if st.session_state.schedule_generated:
+        accessible_pages.append("View Results")
+    
+    # Get current page index in accessible pages
+    current_index = 0  # Default to Introduction if current page isn't accessible
+    if st.session_state.page in accessible_pages:
+        current_index = accessible_pages.index(st.session_state.page)
+    else:
+        # If current page isn't accessible, default to the last accessible page
+        if accessible_pages:
+            current_index = len(accessible_pages) - 1
+            st.session_state.page = accessible_pages[current_index]
+    
+    # Create a radio button with only accessible pages
+    selected_page = st.radio("Go to", accessible_pages, index=current_index)
+    
     # Update the page in session state if changed through the radio button
     if selected_page != st.session_state.page:
         st.session_state.page = selected_page
         st.rerun()
     
+    # Add a visual representation of all pages with completion status
+    st.sidebar.divider()
+    st.sidebar.subheader("Progress")
+    
+    for page in app_pages:
+        if page in accessible_pages:
+            if page == st.session_state.page:
+                st.sidebar.markdown(f"✅ **{page}** (Current)")
+            else:
+                st.sidebar.markdown(f"✅ {page}")
+        elif page == "Configure Settings" and st.session_state.availability_df is None:
+            st.sidebar.markdown(f"⏳ {page} (Upload data first)")
+        elif page == "Generate Roster" and not st.session_state.allocation_feasible:
+            st.sidebar.markdown(f"⚠️ {page} (Insufficient staff availability)")
+        elif page == "View Results" and not st.session_state.schedule_generated:
+            st.sidebar.markdown(f"⏳ {page} (Generate roster first)")
+        else:
+            st.sidebar.markdown(f"⏳ {page} (Complete previous steps first)")
+            
     st.sidebar.divider()
     st.sidebar.subheader("Actions")
     if st.sidebar.button("🔄 Reset Application", help="Clear all data and start over"):
@@ -612,18 +670,21 @@ elif st.session_state.page == "Configure Settings":
             if available_shifts < required_shifts:
                 st.error(f"Insufficient staff availability! Available: {available_shifts}, Required: {required_shifts}")
                 st.markdown("Please adjust staff allocations to increase the number of available shifts.")
+                st.session_state.allocation_feasible = False
             elif available_shifts > required_shifts:
                 st.warning(f"More staff availability than required! Available: {available_shifts}, Required: {required_shifts}")
                 st.markdown(f"Note: {available_shifts - required_shifts} shifts of staff availability will go unused.")
+                st.session_state.allocation_feasible = True
             else:
                 st.success(f"Perfect allocation! Available: {available_shifts}, Required: {required_shifts}")
+                st.session_state.allocation_feasible = True
                 
                 # Check if we have the correct number of staff selected for higher shift count
                 if staff_with_higher_count > 0 and len(staff_with_five) != staff_with_higher_count:
                     st.warning(f"⚠️ You've selected {len(staff_with_five)} staff for {higher_shift_count} shifts, but the optimal allocation requires exactly {staff_with_higher_count} staff.")
                     st.markdown(f"Please adjust your selection to match the required {staff_with_higher_count} staff members for {higher_shift_count} shifts.")
                 else:
-                    # Next step button
+                    # Next step button - only show when allocation is feasible
                     st.markdown("### Next Steps")
                     st.markdown("✅ Staff shift configuration complete. Proceed to **Generate Roster** to create the schedule.")
                     if st.button("Continue to Generate Roster", key="to_generate_btn"):
@@ -1213,7 +1274,9 @@ with col3:
     # Define conditions for proceeding to next page
     if st.session_state.page == "Upload Data" and st.session_state.availability_df is None:
         can_proceed = False
-    elif st.session_state.page == "Configure Settings" and (st.session_state.staff_with_four_shifts is None or len(st.session_state.staff_with_four_shifts) == 0):
+    elif st.session_state.page == "Configure Settings" and (st.session_state.staff_with_four_shifts is None or 
+                                                       len(st.session_state.staff_with_four_shifts) == 0 or 
+                                                       not st.session_state.allocation_feasible):
         can_proceed = False
     elif st.session_state.page == "Generate Roster" and not st.session_state.processing_complete:
         can_proceed = False
