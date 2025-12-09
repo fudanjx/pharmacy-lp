@@ -258,23 +258,6 @@ The web interface includes additional visualizations:
 - `visualizer.py` - Creates visual representations of the roster
 - `utils.py` - Helper functions for data processing
 
-## Development
-
-### Testing
-```bash
-pytest
-```
-
-### Code Formatting
-```bash
-black .
-```
-
-### Linting
-```bash
-flake8
-```
-
 ## License & Usage
 This project is released under a Custom License for Non-Commercial Use. See the [LICENSE](LICENSE) file for complete details.
 
