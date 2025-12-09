@@ -19,7 +19,9 @@ class RosterModel:
                  staff_shifts: Dict[str, int],
                  allow_consecutive_weekends: bool = True,
                  allow_same_weekend: bool = True,
-                 relax_acc_requirement: bool = True):
+                 relax_acc_requirement: bool = True,
+                 enforce_shift_balance: bool = True,
+                 shift_balance_tolerance: int = 1):
         """
         Initialize the RosterModel with necessary data.
 
@@ -29,6 +31,8 @@ class RosterModel:
             availability (Dict): Staff availability for each day and shift
             acc_trained_staff (Set[str]): Set of ACC-trained staff
             staff_shifts (Dict[str, int]): Number of shifts assigned to each staff
+            enforce_shift_balance (bool): Whether to enforce balanced distribution of shift types
+            shift_balance_tolerance (int): Allowed deviation from ideal shift type distribution
         """
         self.staff_names = staff_names
         self.weekend_days = weekend_days
@@ -49,24 +53,32 @@ class RosterModel:
         self.allow_consecutive_weekends = allow_consecutive_weekends
         self.allow_same_weekend = allow_same_weekend
         self.relax_acc_requirement = relax_acc_requirement
+        self.enforce_shift_balance = enforce_shift_balance
+        self.shift_balance_tolerance = shift_balance_tolerance
         
         # Track which constraints were relaxed in the final solution
         self.relaxed_consecutive_weekends = False
         self.relaxed_same_weekend = False
         self.relaxed_acc_requirement = False
+        self.relaxed_shift_balance = False
         
         # Track ACC coverage statistics
         self.acc_coverage_stats = None
+        
+        # Track shift distribution statistics
+        self.shift_distribution_stats = None
 
     def create_model(self, skip_acc_constraints=False, 
                  skip_consecutive_weekend_constraints=False,
-                 skip_same_weekend_constraints=False) -> None:
+                 skip_same_weekend_constraints=False,
+                 skip_shift_balance_constraints=False) -> None:
         """Create the linear programming model with specified constraints.
         
         Args:
             skip_acc_constraints: If True, don't add ACC-trained staff constraints
             skip_consecutive_weekend_constraints: If True, don't add consecutive weekend constraints
             skip_same_weekend_constraints: If True, don't add same-weekend day constraints
+            skip_shift_balance_constraints: If True, don't add shift type balance constraints
         """
         print("Creating linear programming model for roster optimization...")
         if skip_acc_constraints:
@@ -75,6 +87,8 @@ class RosterModel:
             print("- Skipping consecutive weekend constraints")
         if skip_same_weekend_constraints:
             print("- Skipping same weekend day constraints")
+        if skip_shift_balance_constraints:
+            print("- Skipping shift type balance constraints")
             
         # Create the LP problem
         self.problem = LpProblem("Pharmacy_Roster_Scheduling", LpMinimize)
@@ -321,6 +335,65 @@ class RosterModel:
         else:
             print("No ACC-trained staff found, skipping ACC coverage constraint")
 
+        # Constraint 8: Shift Type Balance (soft constraints to encourage even distribution)
+        if not skip_shift_balance_constraints and self.enforce_shift_balance:
+            print(f"Adding shift type balance constraints with tolerance {self.shift_balance_tolerance}")
+            shift_balance_penalties = {}
+            
+            for staff in self.staff_names:
+                total_shifts = self.staff_shifts[staff]
+                
+                # Calculate ideal distribution targets for this staff member
+                # For 4 shifts: aim for [1,1,2] or [1,2,1] or [2,1,1] 
+                # For 5 shifts: aim for [2,2,1] or [2,1,2] or [1,2,2]
+                ideal_per_shift = total_shifts // 3  # Base amount per shift type
+                remainder = total_shifts % 3         # Extra shifts to distribute
+                
+                # Each staff should get at least 'ideal_per_shift' of each type
+                # and at most 'ideal_per_shift + 1' of any type
+                min_per_shift = max(0, ideal_per_shift)
+                max_per_shift = ideal_per_shift + (1 if remainder > 0 else 0) + self.shift_balance_tolerance
+                
+                # For each shift type, add soft constraints
+                for shift_type in self.shifts:
+                    # Count assignments for this staff and shift type
+                    shift_assignments = pulp.lpSum([
+                        self.assignments.get((staff, day, shift_type), 0)
+                        for day in self.weekend_days
+                    ])
+                    
+                    # Add penalty variables for under and over assignment
+                    under_penalty = LpVariable(f"under_penalty_{staff}_{shift_type}", 0, None, LpBinary)
+                    over_penalty = LpVariable(f"over_penalty_{staff}_{shift_type}", 0, None, LpBinary)
+                    
+                    shift_balance_penalties[(staff, shift_type, 'under')] = under_penalty
+                    shift_balance_penalties[(staff, shift_type, 'over')] = over_penalty
+                    
+                    # Soft constraint for minimum assignments
+                    # If shift_assignments < min_per_shift, then under_penalty = 1
+                    if min_per_shift > 0:
+                        self.problem += (
+                            shift_assignments + under_penalty >= min_per_shift,
+                            f"Min_shifts_{staff}_{shift_type}"
+                        )
+                    
+                    # Soft constraint for maximum assignments  
+                    # If shift_assignments > max_per_shift, then over_penalty = 1
+                    self.problem += (
+                        shift_assignments - over_penalty <= max_per_shift,
+                        f"Max_shifts_{staff}_{shift_type}"
+                    )
+            
+            # Add penalties to objective function
+            if shift_balance_penalties:
+                penalty_sum = pulp.lpSum(shift_balance_penalties.values())
+                self.problem += penalty_sum * 3  # Weight to prioritize shift balance
+                print(f"Added {len(shift_balance_penalties)} shift balance penalty variables")
+        elif skip_shift_balance_constraints:
+            print("Skipping shift type balance constraints as requested")
+        else:
+            print("Shift balance enforcement disabled")
+
     def _extract_results(self) -> Dict:
         """Extract the results from the solved model."""
         roster = {}
@@ -363,6 +436,67 @@ class RosterModel:
                 "total_saturdays": total_saturdays,
                 "saturdays_without_acc": saturdays_without_acc
             }
+        
+        # Track shift distribution statistics
+        shift_distribution = {}
+        total_imbalance = 0
+        staff_with_imbalance = []
+        
+        for staff in self.staff_names:
+            # Count each shift type for this staff
+            shift_counts = {"early": 0, "mid": 0, "late": 0}
+            if staff in roster:
+                for (day, shift) in roster[staff]:
+                    shift_counts[shift] += 1
+            
+            # Calculate ideal distribution
+            total_shifts = self.staff_shifts[staff]
+            ideal_per_shift = total_shifts // 3
+            remainder = total_shifts % 3
+            
+            # Calculate balance score (deviation from ideal)
+            imbalance_score = 0
+            min_shifts = min(shift_counts.values())
+            max_shifts = max(shift_counts.values())
+            shift_spread = max_shifts - min_shifts
+            
+            # Check if within tolerance
+            max_allowed_spread = 1 + self.shift_balance_tolerance
+            is_balanced = shift_spread <= max_allowed_spread
+            
+            if not is_balanced:
+                staff_with_imbalance.append(staff)
+                imbalance_score = shift_spread - max_allowed_spread
+                total_imbalance += imbalance_score
+            
+            shift_distribution[staff] = {
+                "shift_counts": shift_counts.copy(),
+                "total_shifts": total_shifts,
+                "ideal_per_shift": ideal_per_shift,
+                "remainder": remainder,
+                "shift_spread": shift_spread,
+                "is_balanced": is_balanced,
+                "imbalance_score": imbalance_score
+            }
+        
+        # Calculate overall balance metrics
+        total_staff = len(self.staff_names)
+        balanced_staff_count = total_staff - len(staff_with_imbalance)
+        balance_percentage = (balanced_staff_count / total_staff) * 100 if total_staff > 0 else 0
+        
+        self.shift_distribution_stats = {
+            "staff_distribution": shift_distribution,
+            "total_staff": total_staff,
+            "balanced_staff_count": balanced_staff_count,
+            "staff_with_imbalance": staff_with_imbalance,
+            "balance_percentage": balance_percentage,
+            "total_imbalance_score": total_imbalance,
+            "relaxed": self.relaxed_shift_balance
+        }
+        
+        print(f"Shift balance: {balanced_staff_count}/{total_staff} staff ({balance_percentage:.1f}%) have balanced shifts")
+        if staff_with_imbalance:
+            print(f"Staff with imbalanced shifts: {staff_with_imbalance}")
         
         self.results = roster
         return roster
@@ -480,6 +614,7 @@ class RosterModel:
         self.relaxed_consecutive_weekends = False
         self.relaxed_same_weekend = False
         self.relaxed_acc_requirement = False
+        self.relaxed_shift_balance = False
         
         # Tier 1: Solve with strict constraints
         print("Tier 1: Attempting to solve with all constraints...")
@@ -557,6 +692,44 @@ class RosterModel:
         else:
             print("Weekend constraint relaxation disabled by user - skipping tier 3")
         
+        # Tier 4: Relax shift balance constraints if enabled and no solution found yet
+        if self.enforce_shift_balance:
+            print("Tier 4: Creating new model with relaxed shift balance constraints...")
+            
+            # Track which constraints to skip (all previously attempted plus shift balance)
+            skip_acc = self.relax_acc_requirement
+            skip_consecutive = self.allow_consecutive_weekends
+            skip_same_weekend = self.allow_same_weekend
+            skip_shift_balance = True  # Always try relaxing shift balance in this tier
+            
+            try:
+                # Create a new model with shift balance constraints skipped
+                self.problem = None  # Reset problem
+                self.create_model(
+                    skip_acc_constraints=skip_acc,
+                    skip_consecutive_weekend_constraints=skip_consecutive,
+                    skip_same_weekend_constraints=skip_same_weekend,
+                    skip_shift_balance_constraints=skip_shift_balance
+                )
+                
+                self.problem.solve(solver)
+                
+                if LpStatus[self.problem.status] == "Optimal":
+                    print("Found solution after relaxing shift balance constraints")
+                    if skip_acc:
+                        self.relaxed_acc_requirement = True
+                    if skip_consecutive:
+                        self.relaxed_consecutive_weekends = True
+                    if skip_same_weekend:
+                        self.relaxed_same_weekend = True
+                    if skip_shift_balance:
+                        self.relaxed_shift_balance = True
+                    return self._extract_results()
+            except Exception as e:
+                print(f"Error in Tier 4 solve: {e}")
+        else:
+            print("Shift balance enforcement disabled - skipping tier 4")
+        
         # If we get here, no solution was found with the allowed relaxations
         attempted_relaxations = []
         if self.relax_acc_requirement:
@@ -565,6 +738,8 @@ class RosterModel:
             attempted_relaxations.append("consecutive weekend constraints")
         if self.allow_same_weekend:
             attempted_relaxations.append("same weekend day constraints")
+        if self.enforce_shift_balance:
+            attempted_relaxations.append("shift balance constraints")
             
         if attempted_relaxations:
             print(f"No solution found even after relaxing: {', '.join(attempted_relaxations)}")
@@ -593,6 +768,14 @@ class RosterModel:
             Dict: Statistics about ACC coverage or None if not applicable
         """
         return self.acc_coverage_stats
+    
+    def get_shift_distribution_stats(self) -> Dict:
+        """Get statistics on shift type distribution balance.
+        
+        Returns:
+            Dict: Statistics about shift distribution balance or None if not applicable
+        """
+        return self.shift_distribution_stats
     
     def get_schedule_by_weekend(self) -> Dict[Tuple[int, str], Dict[str, str]]:
         """

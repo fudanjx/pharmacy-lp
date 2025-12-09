@@ -12,6 +12,7 @@ This application creates optimal quarterly staff schedules for pharmacy weekend 
 
 - **Automated Scheduling:** Generates optimized rosters that satisfy multiple constraints simultaneously
 - **Equal Distribution:** Balances workload by ensuring fair shift distribution among staff
+- **Shift Type Balance:** Evenly distributes early, mid, and late shifts to prevent staff from consistently getting the same shift times
 - **Constraint Handling:** Implements both hard constraints (must be satisfied) and soft constraints (optimized but can be relaxed)
 - **Customizable Outputs:** Generates schedules in multiple formats (Excel, CSV) with visualization options
 - **Staff Availability:** Respects staff availability preferences submitted for the planning period
@@ -57,7 +58,7 @@ python main.py
 ### Command Line Options
 
 ```
-usage: main.py [-h] [--input INPUT] [--output OUTPUT] [--format {excel,csv,both}] [--visualize] [--visualize-dir VISUALIZE_DIR] [--summary]
+usage: main.py [-h] [--input INPUT] [--output OUTPUT] [--format {excel,csv,both}] [--visualize] [--visualize-dir VISUALIZE_DIR] [--summary] [--shift-balance] [--no-shift-balance] [--shift-balance-tolerance {0,1,2}]
 
 Pharmacy Roster Scheduling using Linear Programming
 
@@ -73,6 +74,10 @@ options:
   --visualize-dir VISUALIZE_DIR
                         Directory to save visualization files
   --summary             Print a summary of the schedule to the console
+  --shift-balance       Enforce balanced distribution of shift types (default: enabled)
+  --no-shift-balance    Disable shift type balance enforcement
+  --shift-balance-tolerance {0,1,2}
+                        Allowed deviation from ideal shift distribution (default: 1)
 ```
 
 ### CLI Examples
@@ -90,6 +95,16 @@ python main.py --format both --visualize
 Print a summary of the generated schedule:
 ```bash
 python main.py --summary
+```
+
+Generate a roster with strict shift balance (no tolerance):
+```bash
+python main.py --shift-balance-tolerance 0
+```
+
+Generate a roster without shift balance enforcement:
+```bash
+python main.py --no-shift-balance
 ```
 
 ## Part 2: Streamlit Web Interface
@@ -144,6 +159,7 @@ The schedule optimizes for the following constraints:
 - Staff should not work on consecutive weekends
 - Staff should not work on both Saturday and Sunday of the same weekend
 - At least one ACC-trained staff member should be scheduled for Saturdays
+- Shift types (early, mid, late) should be evenly distributed among all staff members
 
 ### Tiered Constraint Relaxation
 
@@ -152,11 +168,14 @@ The solver implements an intelligent tiered relaxation approach when no feasible
 1. **Tier 1**: First attempts to solve with all constraints enforced
 2. **Tier 2**: If no solution found, relaxes the ACC-trained staff requirement (if allowed)
 3. **Tier 3**: If still no solution, also relaxes consecutive weekend constraints and/or same weekend constraints (if allowed)
+4. **Tier 4**: If still no solution, relaxes shift type balance constraints as a last resort (if enabled)
 
 In the web interface, users can control which constraints can be relaxed through the Advanced Options:
 - **Allow Consecutive Weekends if Needed**: Allows staff to work consecutive weekends when necessary
 - **Allow Both Days on Same Weekend if Needed**: Allows staff to work both days of the same weekend when necessary
 - **ACC staff are not mandatory for every Saturday**: Allows Saturdays without ACC-trained staff when necessary
+- **Enforce Balanced Shift Type Distribution**: Controls whether shift types should be evenly distributed (enabled by default)
+- **Shift Balance Tolerance**: Sets how much deviation is allowed from ideal shift type distribution (0=strict, 1=±1 shift difference, 2=±2 shift difference)
 
 The results page will indicate which constraints were relaxed to find a solution.
 
@@ -170,6 +189,36 @@ The system uses a "best effort" approach to maintain ACC-trained staff coverage 
 - Results show clear statistics about ACC coverage, including which Saturdays (if any) don't have coverage
 
 This approach ensures optimal distribution of specialized staff even when constraints must be relaxed.
+
+## Shift Type Balance
+
+The shift balance feature ensures equitable distribution of shift types (early, mid, late) among staff members, preventing scenarios where some staff consistently receive less desirable shift times.
+
+### How Shift Balance Works
+
+**For staff with 4 shifts:**
+- **Ideal distribution**: [1,1,2], [1,2,1], or [2,1,1] across early/mid/late shifts
+- **With tolerance 1**: Any distribution where the difference between max and min shift types ≤ 2
+- **Example**: [1,1,2] ✓ balanced, [0,1,3] ✗ imbalanced (spread = 3 > tolerance+1)
+
+**For staff with 5 shifts:**
+- **Ideal distribution**: [2,2,1], [2,1,2], or [1,2,2] across early/mid/late shifts
+- **With tolerance 1**: Maximum spread of 2 between any shift types
+- **Example**: [2,1,2] ✓ balanced, [0,2,3] ✗ imbalanced (spread = 3 > tolerance+1)
+
+### Balance Tolerance Levels
+
+- **Tolerance 0** (Strict): Perfect balance required - max spread = 1
+- **Tolerance 1** (Default): Flexible balance - max spread = 2  
+- **Tolerance 2** (Relaxed): Loose balance - max spread = 3
+
+### Balance Metrics
+
+The system tracks and reports:
+- **Balance Achievement**: Percentage of staff with balanced shift distributions
+- **Staff Balance Status**: Individual staff marked as balanced ✓ or imbalanced ⚠
+- **Shift Spread**: Difference between max and min shift types per staff member
+- **Relaxation Status**: Whether balance constraints were relaxed to find a solution
 
 ## Input Data Format
 
@@ -190,11 +239,14 @@ The generated Excel file includes multiple sheets:
 When the `--visualize` flag is used, the program generates:
 - Shift distribution chart - Bar chart showing shifts per staff member
 - Weekend heatmap - Visual representation of which weekends each staff works
-- Shift type distribution - Stacked bar chart showing early/mid/late shift distribution
+- Shift type distribution - Stacked bar chart showing early/mid/late shift distribution with balance indicators
+- Shift balance report - Comprehensive analysis of shift type distribution quality (when balance is enabled)
 
 The web interface includes additional visualizations:
 - Staff availability heatmap - Visual representation of submitted staff availability
+- Shift type balance analysis - Real-time metrics showing balance achievement percentage and individual staff balance status
 - Interactive filtering options for all visualization types
+- Balance indicators using color-coded borders (green=balanced, red=imbalanced) and checkmark/warning symbols
 
 ## Project Structure
 

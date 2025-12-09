@@ -66,6 +66,26 @@ def parse_arguments():
         help="Relax hard constraints if no solution can be found (last resort)"
     )
     
+    parser.add_argument(
+        "--shift-balance",
+        action="store_true",
+        default=True,
+        help="Enforce balanced distribution of shift types (early/mid/late) among staff"
+    )
+    
+    parser.add_argument(
+        "--no-shift-balance",
+        action="store_true",
+        help="Disable shift balance enforcement"
+    )
+    
+    parser.add_argument(
+        "--shift-balance-tolerance",
+        type=int,
+        default=1,
+        help="Allowed deviation from ideal shift type distribution (default: 1)"
+    )
+    
     return parser.parse_args()
 
 
@@ -102,13 +122,21 @@ def main():
     
     # Create and solve model
     print("Creating and solving the linear programming model...")
+    
+    # Determine shift balance enforcement
+    enforce_shift_balance = args.shift_balance and not args.no_shift_balance
+    
     model = RosterModel(
         loader.get_staff_names(),
         loader.get_weekend_days(),
         loader.get_availability(),
         loader.get_acc_trained_staff(),
         loader.get_staff_shifts(),
-        relax_constraints=args.relax_constraints
+        allow_consecutive_weekends=args.relax_constraints,
+        allow_same_weekend=args.relax_constraints,
+        relax_acc_requirement=args.relax_constraints,
+        enforce_shift_balance=enforce_shift_balance,
+        shift_balance_tolerance=args.shift_balance_tolerance
     )
     
     model.create_model()
@@ -119,6 +147,15 @@ def main():
         return 1
     
     schedule_by_weekend = model.get_schedule_by_weekend()
+    
+    # Display shift balance results if enabled
+    shift_stats = model.get_shift_distribution_stats()
+    if shift_stats and enforce_shift_balance:
+        balance_pct = shift_stats.get("balance_percentage", 0)
+        relaxed = shift_stats.get("relaxed", False)
+        print(f"Shift balance: {balance_pct:.1f}% of staff have balanced shift distributions")
+        if relaxed:
+            print("Note: Shift balance constraints were relaxed to find a solution")
     
     # Get the actual number of weekends from the data loader
     weekend_count = len(loader.get_weekend_days()) // 2
@@ -147,7 +184,8 @@ def main():
         visualizer = RosterVisualizer(
             loader.get_staff_names(),
             solution,
-            weekend_count  # Using the actual number of weekends
+            weekend_count,  # Using the actual number of weekends
+            model.get_shift_distribution_stats()  # Pass shift balance stats
         )
         visualizer.generate_all_visualizations(args.visualize_dir)
     

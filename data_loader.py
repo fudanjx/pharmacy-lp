@@ -321,6 +321,44 @@ class DataLoader:
         """
         return self.staff_shifts
 
+    def get_shift_balance_targets(self) -> Dict[str, Dict[str, int]]:
+        """
+        Calculate optimal shift type distribution targets for each staff member.
+        
+        Returns:
+            Dict[str, Dict[str, int]]: Dictionary mapping staff names to their target shift counts
+                                     Format: {staff: {"min_per_shift": int, "max_per_shift": int, 
+                                                      "ideal_distribution": [int, int, int]}}
+        """
+        shift_targets = {}
+        
+        for staff in self.staff_names:
+            total_shifts = self.staff_shifts[staff]
+            
+            # Calculate base distribution
+            ideal_per_shift = total_shifts // 3  # Base amount per shift type
+            remainder = total_shifts % 3         # Extra shifts to distribute
+            
+            # Calculate min/max bounds
+            min_per_shift = max(0, ideal_per_shift)
+            max_per_shift = ideal_per_shift + (1 if remainder > 0 else 0)
+            
+            # Create ideal distribution array [early, mid, late]
+            ideal_distribution = [ideal_per_shift] * 3
+            # Distribute remainder shifts (prioritize early, then mid, then late)
+            for i in range(remainder):
+                ideal_distribution[i] += 1
+            
+            shift_targets[staff] = {
+                "total_shifts": total_shifts,
+                "min_per_shift": min_per_shift,
+                "max_per_shift": max_per_shift,
+                "ideal_distribution": ideal_distribution,
+                "remainder": remainder
+            }
+        
+        return shift_targets
+
 
 if __name__ == "__main__":
     # Test the DataLoader

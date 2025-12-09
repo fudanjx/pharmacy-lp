@@ -178,6 +178,18 @@ if 'uploaded_file' not in st.session_state:
     st.session_state.uploaded_file = None
 if 'solution' not in st.session_state:
     st.session_state.solution = None
+if 'model' not in st.session_state:
+    st.session_state.model = None
+if 'enforce_shift_balance' not in st.session_state:
+    st.session_state.enforce_shift_balance = True
+if 'shift_balance_tolerance' not in st.session_state:
+    st.session_state.shift_balance_tolerance = 1
+if 'allow_consecutive_weekends' not in st.session_state:
+    st.session_state.allow_consecutive_weekends = True
+if 'allow_same_weekend' not in st.session_state:
+    st.session_state.allow_same_weekend = True
+if 'relax_acc_requirement' not in st.session_state:
+    st.session_state.relax_acc_requirement = True
 if 'output_file' not in st.session_state:
     st.session_state.output_file = None
 if 'schedule_summary' not in st.session_state:
@@ -754,21 +766,53 @@ elif st.session_state.page == "Generate Roster":
             
             allow_consecutive_weekends = st.checkbox(
                 "Allow Consecutive Weekends if Needed", 
-                value=True, 
+                value=st.session_state.allow_consecutive_weekends, 
                 help="If checked, the model can assign consecutive weekends if no other solution is possible"
             )
+            st.session_state.allow_consecutive_weekends = allow_consecutive_weekends
             
             allow_same_weekend = st.checkbox(
                 "Allow Both Days on Same Weekend if Needed", 
-                value=True,
+                value=st.session_state.allow_same_weekend,
                 help="If checked, the model can assign both Saturday and Sunday of the same weekend to a staff member if necessary"
             )
+            st.session_state.allow_same_weekend = allow_same_weekend
             
             relax_acc_requirement = st.checkbox(
                 "ACC staff are not mandatory for every Saturday", 
-                value=True, 
+                value=st.session_state.relax_acc_requirement, 
                 help="If checked, the model can schedule Saturdays without ACC-trained staff when necessary to find a solution"
             )
+            st.session_state.relax_acc_requirement = relax_acc_requirement
+            
+            st.markdown("---")
+            st.markdown("**Shift Balance Options**")
+            
+            enforce_shift_balance = st.checkbox(
+                "Enforce Balanced Shift Type Distribution", 
+                value=st.session_state.enforce_shift_balance,
+                help="If checked, the model will try to evenly distribute early, mid, and late shifts among staff members"
+            )
+            st.session_state.enforce_shift_balance = enforce_shift_balance
+            
+            if enforce_shift_balance:
+                shift_balance_tolerance = st.selectbox(
+                    "Shift Balance Tolerance",
+                    options=[0, 1, 2],
+                    index=st.session_state.shift_balance_tolerance,
+                    help="Allowed deviation from ideal shift type distribution. 0 = strict balance, 1 = allow ±1 shift difference, 2 = allow ±2 shift difference"
+                )
+                st.session_state.shift_balance_tolerance = shift_balance_tolerance
+                
+                st.markdown(f"""
+                <div class="info-box">
+                <p><strong>Shift Balance Explanation:</strong></p>
+                <p>With tolerance {st.session_state.shift_balance_tolerance}, staff members can have at most {st.session_state.shift_balance_tolerance + 1} more shifts of one type compared to another.</p>
+                <p><em>Example for 4 shifts:</em> With tolerance 1, valid distributions include [1,1,2], [1,2,1], [2,1,1] but not [0,1,3]</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                shift_balance_tolerance = st.session_state.shift_balance_tolerance  # Use stored value when not enforcing balance
         
         # Button to generate roster
         generate_button = st.button("🔄 Generate Roster Schedule", type="primary", use_container_width=True)
@@ -855,9 +899,11 @@ elif st.session_state.page == "Generate Roster":
                         loader.get_availability(),
                         loader.get_acc_trained_staff(),
                         loader.staff_shifts,
-                        allow_consecutive_weekends,
-                        allow_same_weekend,
-                        relax_acc_requirement
+                        st.session_state.allow_consecutive_weekends,
+                        st.session_state.allow_same_weekend,
+                        st.session_state.relax_acc_requirement,
+                        st.session_state.enforce_shift_balance,
+                        st.session_state.shift_balance_tolerance
                     )
                     
                     model.create_model()
@@ -869,21 +915,21 @@ elif st.session_state.page == "Generate Roster":
                         
                         # Determine which constraints were enabled/disabled to provide better guidance
                         strict_constraints = []
-                        if not allow_consecutive_weekends:
+                        if not st.session_state.allow_consecutive_weekends:
                             strict_constraints.append("Staff cannot work consecutive weekends")
-                        if not allow_same_weekend:
+                        if not st.session_state.allow_same_weekend:
                             strict_constraints.append("Staff cannot work both days of the same weekend")
-                        if not relax_acc_requirement:
+                        if not st.session_state.relax_acc_requirement:
                             strict_constraints.append("Every Saturday must have at least one ACC-trained staff")
                         
                         # Create messaging about what relaxations were attempted
                         relaxation_text = ""
                         relaxations_attempted = []
-                        if allow_consecutive_weekends:
+                        if st.session_state.allow_consecutive_weekends:
                             relaxations_attempted.append("allowing consecutive weekend assignments")
-                        if allow_same_weekend:
+                        if st.session_state.allow_same_weekend:
                             relaxations_attempted.append("allowing staff to work both days of the same weekend")
-                        if relax_acc_requirement:
+                        if st.session_state.relax_acc_requirement:
                             relaxations_attempted.append("allowing Saturdays without ACC-trained staff")
                         
                         # Build the message based on what was attempted
@@ -950,6 +996,7 @@ elif st.session_state.page == "Generate Roster":
                         
                         # Save results in session state
                         st.session_state.solution = solution
+                        st.session_state.model = model  # Store model for accessing statistics
                         st.session_state.output_file = output_file
                         st.session_state.schedule_summary = schedule_by_weekend
                         st.session_state.schedule_generated = True
@@ -1245,6 +1292,104 @@ elif st.session_state.page == "View Results":
                 color_continuous_scale="Blues"
             )
             st.plotly_chart(fig2, use_container_width=True)
+            
+            # 3. Shift Type Distribution and Balance
+            shift_distribution_stats = st.session_state.model.get_shift_distribution_stats()
+            if shift_distribution_stats and st.session_state.enforce_shift_balance:
+                st.subheader("Shift Type Balance Analysis")
+                
+                # Extract shift balance data
+                staff_distribution = shift_distribution_stats.get("staff_distribution", {})
+                balance_percentage = shift_distribution_stats.get("balance_percentage", 0)
+                relaxed = shift_distribution_stats.get("relaxed", False)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Balance Achievement", 
+                        f"{balance_percentage:.1f}%",
+                        help="Percentage of staff with balanced shift distributions"
+                    )
+                with col2:
+                    balanced_count = shift_distribution_stats.get("balanced_staff_count", 0)
+                    total_staff = shift_distribution_stats.get("total_staff", len(staff_names))
+                    st.metric(
+                        "Balanced Staff", 
+                        f"{balanced_count}/{total_staff}"
+                    )
+                with col3:
+                    if relaxed:
+                        st.warning("⚠️ Balance Relaxed")
+                    else:
+                        st.success("✅ Balance Enforced")
+                
+                # Create shift type distribution chart
+                shift_type_data = []
+                balance_colors = []
+                
+                for staff, info in staff_distribution.items():
+                    shift_counts = info["shift_counts"]
+                    is_balanced = info["is_balanced"]
+                    
+                    shift_type_data.append({
+                        "Staff": staff,
+                        "Early": shift_counts["early"],
+                        "Mid": shift_counts["mid"], 
+                        "Late": shift_counts["late"],
+                        "Status": "Balanced" if is_balanced else "Imbalanced"
+                    })
+                
+                if shift_type_data:
+                    shift_df = pd.DataFrame(shift_type_data)
+                    
+                    # Create stacked bar chart
+                    fig3 = px.bar(
+                        shift_df,
+                        x="Staff",
+                        y=["Early", "Mid", "Late"],
+                        title="Shift Type Distribution by Staff",
+                        color_discrete_map={
+                            "Early": "#87CEEB",  # Light blue
+                            "Mid": "#4682B4",    # Steel blue  
+                            "Late": "#191970"    # Navy
+                        }
+                    )
+                    
+                    # Add balance status annotations
+                    for i, row in shift_df.iterrows():
+                        total = row["Early"] + row["Mid"] + row["Late"]
+                        symbol = "✓" if row["Status"] == "Balanced" else "⚠"
+                        color = "green" if row["Status"] == "Balanced" else "red"
+                        
+                        fig3.add_annotation(
+                            x=i,
+                            y=total + 0.1,
+                            text=symbol,
+                            showarrow=False,
+                            font=dict(color=color, size=16)
+                        )
+                    
+                    fig3.update_layout(xaxis_tickangle=-45, yaxis_title="Number of Shifts")
+                    st.plotly_chart(fig3, use_container_width=True)
+                    
+                    # Balance details table
+                    with st.expander("View Detailed Balance Information"):
+                        balance_details = []
+                        for staff, info in staff_distribution.items():
+                            balance_details.append({
+                                "Staff": staff,
+                                "Early Shifts": info["shift_counts"]["early"],
+                                "Mid Shifts": info["shift_counts"]["mid"], 
+                                "Late Shifts": info["shift_counts"]["late"],
+                                "Shift Spread": info["shift_spread"],
+                                "Balanced": "✓" if info["is_balanced"] else "✗"
+                            })
+                        
+                        balance_df = pd.DataFrame(balance_details)
+                        st.dataframe(balance_df, use_container_width=True)
+            else:
+                st.info("Shift balance analysis not available. Enable shift balance enforcement in Advanced Options to see this information.")
         
         # Download options
         st.divider()
