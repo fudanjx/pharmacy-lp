@@ -204,36 +204,59 @@ class RosterModel:
                 )
         
         # Constraint 4: No staff should work consecutive days within the same weekend
-        # Use soft constraint with penalties for this requirement
         if not skip_same_weekend_constraints:
-            print("Adding constraints for consecutive days within same weekend")
-            same_weekend_penalties = {}
-            
-            for staff in self.staff_names:
-                for weekend in self.weekends:
-                    sat_day = (weekend, "Saturday")
-                    sun_day = (weekend, "Sunday")
-                    
-                    # Create penalty variable for this staff and weekend
-                    penalty_var = LpVariable(f"same_weekend_penalty_{staff}_{weekend}", 0, 1, LpBinary)
-                    same_weekend_penalties[(staff, weekend)] = penalty_var
-                    
-                    # Sum of shifts on Saturday and Sunday for this weekend
-                    sat_shifts = pulp.lpSum(self.assignments.get((staff, sat_day, shift), 0) 
-                                          for shift in self.shifts)
-                    sun_shifts = pulp.lpSum(self.assignments.get((staff, sun_day, shift), 0) 
-                                          for shift in self.shifts)
-                    
-                    # Staff can only work on one day of the weekend unless penalty is applied
-                    self.problem += (
-                        sat_shifts + sun_shifts <= 1 + penalty_var,
-                        f"No_consecutive_days_in_weekend_{staff}_{weekend}"
-                    )
-                    
-            # Add penalties to objective function (to minimize violations)
-            same_weekend_penalty_sum = pulp.lpSum(same_weekend_penalties.values())
-            self.problem += same_weekend_penalty_sum * 2  # Add to objective with higher weight
-            print(f"Added {len(same_weekend_penalties)} soft constraints for consecutive days within same weekend")
+            if self.allow_same_weekend:
+                # SOFT CONSTRAINT - discouraged but allowed if needed for feasibility
+                print("Adding SOFT constraints for same weekend days (penalty-based)")
+                same_weekend_penalties = {}
+
+                for staff in self.staff_names:
+                    for weekend in self.weekends:
+                        sat_day = (weekend, "Saturday")
+                        sun_day = (weekend, "Sunday")
+
+                        # Create penalty variable
+                        penalty_var = LpVariable(f"same_weekend_penalty_{staff}_{weekend}", 0, 1, LpBinary)
+                        same_weekend_penalties[(staff, weekend)] = penalty_var
+
+                        sat_shifts = pulp.lpSum(self.assignments.get((staff, sat_day, shift), 0)
+                                              for shift in self.shifts)
+                        sun_shifts = pulp.lpSum(self.assignments.get((staff, sun_day, shift), 0)
+                                              for shift in self.shifts)
+
+                        # Soft constraint with penalty
+                        self.problem += (
+                            sat_shifts + sun_shifts <= 1 + penalty_var,
+                            f"No_same_weekend_SOFT_{staff}_{weekend}"
+                        )
+
+                # Add penalties to objective function
+                same_weekend_penalty_sum = pulp.lpSum(same_weekend_penalties.values())
+                self.problem += same_weekend_penalty_sum * 2
+                print(f"Added {len(same_weekend_penalties)} soft constraints for same weekend days")
+            else:
+                # HARD CONSTRAINT - absolutely prohibited, no exceptions
+                print("Adding HARD constraints for same weekend days (strict enforcement)")
+                constraint_count = 0
+
+                for staff in self.staff_names:
+                    for weekend in self.weekends:
+                        sat_day = (weekend, "Saturday")
+                        sun_day = (weekend, "Sunday")
+
+                        sat_shifts = pulp.lpSum(self.assignments.get((staff, sat_day, shift), 0)
+                                              for shift in self.shifts)
+                        sun_shifts = pulp.lpSum(self.assignments.get((staff, sun_day, shift), 0)
+                                              for shift in self.shifts)
+
+                        # Hard constraint - no penalty variable
+                        self.problem += (
+                            sat_shifts + sun_shifts <= 1,
+                            f"No_same_weekend_HARD_{staff}_{weekend}"
+                        )
+                        constraint_count += 1
+
+                print(f"Added {constraint_count} hard constraints for same weekend days")
         else:
             print("Skipping same weekend day constraints as requested")
         
@@ -263,45 +286,59 @@ class RosterModel:
         
         # Constraint 6: No consecutive weekend assignments
         if not skip_consecutive_weekend_constraints:
-            # First check if this constraint might be too restrictive
-            avg_shifts_per_staff = sum(self.staff_shifts.values()) / len(self.staff_names)
-            weekends_per_staff = avg_shifts_per_staff / 3  # Assuming 3 shifts per weekend
-            weekends_ratio = weekends_per_staff / len(self.weekends)
-            
-            print(f"Weekends needed per staff: {weekends_per_staff:.2f} out of {len(self.weekends)} ({weekends_ratio:.2%})")
-            
-            # If the ratio is high, relax the constraint to allow some consecutive weekends
-            if weekends_ratio > 0.4:  # More than 40% of weekends needed, might be hard to avoid consecutive weekends
-                print("WARNING: Staff might need to work many weekends. Relaxing consecutive weekend constraint.")
-                # Use a soft constraint with penalties instead
+            # Calculate ratio of required weekends per staff
+            weekends_per_staff = {}
+            for staff in self.staff_names:
+                target_shifts = self.staff_shifts[staff]
+                weekends_per_staff[staff] = target_shifts / 3
+
+            avg_weekends_ratio = sum(weekends_per_staff.values()) / len(weekends_per_staff) / len(self.weekends)
+
+            if self.allow_consecutive_weekends:
+                # SOFT CONSTRAINT - use penalties
+                print(f"Adding SOFT constraints for consecutive weekends (avg ratio: {avg_weekends_ratio:.2f})")
                 consecutive_penalties = {}
+
                 for staff in self.staff_names:
-                    for i, weekend in enumerate(sorted(self.weekends)[:-1]):
-                        next_weekend = sorted(self.weekends)[i+1]
-                        penalty_var = LpVariable(f"consec_penalty_{staff}_{weekend}_{next_weekend}", 0, 1, LpBinary)
+                    sorted_weekends = sorted(self.weekends)
+                    for i in range(len(sorted_weekends) - 1):
+                        weekend = sorted_weekends[i]
+                        next_weekend = sorted_weekends[i + 1]
+
+                        penalty_var = LpVariable(f"consecutive_penalty_{staff}_{weekend}_{next_weekend}", 0, 1, LpBinary)
                         consecutive_penalties[(staff, weekend, next_weekend)] = penalty_var
-                        
-                        # Link penalty variable to consecutive weekends
+
                         self.problem += (
-                            weekend_assignments[(staff, weekend)] + 
+                            weekend_assignments[(staff, weekend)] +
                             weekend_assignments[(staff, next_weekend)] <= 1 + penalty_var,
-                            f"Consec_weekend_link_{staff}_{weekend}_{next_weekend}"
+                            f"No_consecutive_weekends_SOFT_{staff}_{weekend}_{next_weekend}"
                         )
-                
-                # Add penalties to objective function
-                penalty_sum = pulp.lpSum(consecutive_penalties.values())
-                self.problem += penalty_sum  # Add to the objective (which was just a dummy variable)
+
+                consecutive_penalty_sum = pulp.lpSum(consecutive_penalties.values())
+                # Use higher weight for lower ratios where it's more achievable
+                weight = 5 if avg_weekends_ratio < 0.4 else 3
+                self.problem += consecutive_penalty_sum * weight
                 print(f"Added {len(consecutive_penalties)} soft constraints for consecutive weekends")
             else:
-                # Use hard constraints as before
+                # HARD CONSTRAINT - strictly prohibited regardless of ratio
+                print(f"Adding HARD constraints for consecutive weekends (strict enforcement, ratio: {avg_weekends_ratio:.2f})")
+                constraint_count = 0
+
                 for staff in self.staff_names:
-                    for i, weekend in enumerate(sorted(self.weekends)[:-1]):
-                        next_weekend = sorted(self.weekends)[i+1]
+                    sorted_weekends = sorted(self.weekends)
+                    for i in range(len(sorted_weekends) - 1):
+                        weekend = sorted_weekends[i]
+                        next_weekend = sorted_weekends[i + 1]
+
+                        # Hard constraint - no penalty variable
                         self.problem += (
-                            weekend_assignments[(staff, weekend)] + 
+                            weekend_assignments[(staff, weekend)] +
                             weekend_assignments[(staff, next_weekend)] <= 1,
-                            f"No_consecutive_weekends_{staff}_{weekend}_{next_weekend}"
+                            f"No_consecutive_weekends_HARD_{staff}_{weekend}_{next_weekend}"
                         )
+                        constraint_count += 1
+
+                print(f"Added {constraint_count} hard constraints for consecutive weekends")
         else:
             print("Skipping consecutive weekend constraints as requested")
         

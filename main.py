@@ -85,7 +85,19 @@ def parse_arguments():
         default=1,
         help="Allowed deviation from ideal shift type distribution (default: 1)"
     )
-    
+
+    parser.add_argument(
+        "--strict-same-weekend",
+        action="store_true",
+        help="Strictly prohibit staff from working both days of the same weekend (hard constraint)"
+    )
+
+    parser.add_argument(
+        "--strict-consecutive-weekends",
+        action="store_true",
+        help="Strictly prohibit consecutive weekend assignments (hard constraint)"
+    )
+
     return parser.parse_args()
 
 
@@ -125,15 +137,19 @@ def main():
     
     # Determine shift balance enforcement
     enforce_shift_balance = args.shift_balance and not args.no_shift_balance
-    
+
+    # Determine constraint settings (new flags override relax_constraints)
+    allow_consecutive_weekends = not args.strict_consecutive_weekends if hasattr(args, 'strict_consecutive_weekends') else args.relax_constraints
+    allow_same_weekend = not args.strict_same_weekend if hasattr(args, 'strict_same_weekend') else args.relax_constraints
+
     model = RosterModel(
         loader.get_staff_names(),
         loader.get_weekend_days(),
         loader.get_availability(),
         loader.get_acc_trained_staff(),
         loader.get_staff_shifts(),
-        allow_consecutive_weekends=args.relax_constraints,
-        allow_same_weekend=args.relax_constraints,
+        allow_consecutive_weekends=allow_consecutive_weekends,
+        allow_same_weekend=allow_same_weekend,
         relax_acc_requirement=args.relax_constraints,
         enforce_shift_balance=enforce_shift_balance,
         shift_balance_tolerance=args.shift_balance_tolerance
